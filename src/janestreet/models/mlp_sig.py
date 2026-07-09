@@ -42,13 +42,13 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from janestreet.data.dataset import DateBatchDataset, flatten_collate_fn
-from janestreet.models._torch_utils import (
+from janestreet.models.base import BaseModel, FitData
+from janestreet.theory.signatures import SignatureBlock
+from janestreet.theory.torch_utils import (
     auto_device,
     reshape_flat_to_sequence,
     reshape_sequence_to_flat,
 )
-from janestreet.models.base import BaseModel, FitData
-from janestreet.models.signature import SignatureBlock
 from janestreet.training.loss import WeightedR2Loss
 from janestreet.training.metrics import r2_weighted_torch
 

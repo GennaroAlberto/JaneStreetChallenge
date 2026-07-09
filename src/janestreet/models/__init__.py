@@ -12,7 +12,6 @@ from typing import Any
 from janestreet.models.base import BaseModel
 from janestreet.models.gbm import XGBPerHorizon
 from janestreet.models.itransformer import InvertedTransformerModel
-from janestreet.models.mamba import MambaModel
 from janestreet.models.mlp import MLPModel
 from janestreet.models.mlp_sig import MLPWithSignatureModel
 from janestreet.models.recurrent import RecurrentModel
@@ -36,10 +35,6 @@ REGISTRY: dict[str, Callable[..., BaseModel]] = {
     "sig_transformer": lambda **kw: SignatureTransformerModel(**kw),
     # Gradient boosting per-horizon (non-DL baseline).
     "xgb": lambda **kw: XGBPerHorizon(**kw),
-    # Selective state-space model (Mamba). Different geometry from LSTM
-    # (unbounded latent, data-dependent transitions) and from attention
-    # (linear-time, no O(T²) memory). Ensemble diversity candidate.
-    "mamba": lambda **kw: MambaModel(**kw),
     # Causal iTransformer/TimeXer-inspired: inverted (cross-feature) attention
     # + endogenous global-token cross-attention + causal temporal mixing.
     "itransformer": lambda **kw: InvertedTransformerModel(**kw),
@@ -62,7 +57,6 @@ __all__ = [
     "InvertedTransformerModel",
     "MLPModel",
     "MLPWithSignatureModel",
-    "MambaModel",
     "RecurrentModel",
     "SignatureTransformerModel",
     "TimeXerModel",

@@ -80,11 +80,6 @@ MODEL_KWARGS: dict[str, dict] = {
         lr=1e-3, weight_decay=1e-2, epochs=15, batch_size=1, grad_clip=1.0,
         early_stopping_patience=4, lr_refit=1e-3, device="cpu", num_aux=4,
     ),
-    "mamba": dict(
-        d_model=96, n_layers=3, d_state=16, d_conv=4, expand=2, dropout=0.1,
-        lr=5e-4, weight_decay=1e-2, epochs=12, batch_size=1, grad_clip=1.0,
-        early_stopping_patience=4, lr_refit=1e-3, device="cpu",
-    ),
     # ---- small-intensity models (fast; good for validating the bag loop
     #      and cheap ensemble members) ----
     # Single-branch GRU/LSTM: no aux heads, 2 layers × 64 — ~4× lighter than

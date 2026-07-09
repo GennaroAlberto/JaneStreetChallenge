@@ -13,8 +13,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from janestreet.models._torch_utils import auto_device
 from janestreet.models.base import BaseModel, FitData
+from janestreet.theory.torch_utils import auto_device
 from janestreet.training.loss import WeightedR2Loss
 from janestreet.training.metrics import r2_weighted_torch
 

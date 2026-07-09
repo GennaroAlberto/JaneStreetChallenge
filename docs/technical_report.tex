@@ -150,11 +150,6 @@ A causal attention encoder is the baseline. We then adapted two recent ideas:
   by a perturbation test.
 \end{itemize}
 
-\subsection{Selective state space (\texttt{mamba})}
-A pure-PyTorch Mamba block --- data-dependent linear dynamics with an unbounded
-latent, a third architectural family distinct from gated RNNs and attention.
-Included primarily as a source of ensemble diversity.
-
 \section{Feature-engineering angles}
 Beyond the baseline set we investigated: (i)~\textbf{lagged responders} ---
 yesterday's full responder path as input features, which is both what the
@@ -233,6 +228,35 @@ base                          & 125 & $+0.00594$ \\
 \caption{Responder feature-engineering ablation. Raw lags are flat; the
 engineered multi-scale/spread signals give a real lift.}
 \end{table}
+
+\section{Negative results and discarded approaches}
+We keep an explicit record of what was tried and dropped, so the roadmap is not
+re-litigated. Fuller evidence lives in \texttt{docs/WHAT\_DIDNT\_WORK.md}.
+\begin{itemize}[leftmargin=1.2em,itemsep=2pt]
+  \item \textbf{Signatures as ensemble members.} The log-signature / Volterra
+    machinery works, and AR-based channel selection beats univariate selection,
+    but no signature model moved the ensemble --- they are too correlated with
+    the RNNs, which already encode the intraday path. Retained as reusable
+    theory (\texttt{janestreet.theory.signatures}), not in the production blend.
+  \item \textbf{Full history / curriculum.} An 800-date curriculum ($+0.00765$)
+    underperformed the 280-date recency baseline ($+0.00893$); old data yields a
+    negative static $R^2$ recovered only by online refit. The recency knee sits
+    near ${\sim}400$ recent dates.
+  \item \textbf{Symbol identity.} A 39-way \texttt{symbol\_id} one-hot was flat
+    for XGB ($-0.00002$) --- the per-symbol level is already normalised away.
+    Only the temporally \emph{stable} feature-profile cluster helped, modestly
+    ($+0.00022$); responder co-movement clustering is unstable (early-vs-late
+    ARI $-0.07$) and unusable for routing.
+  \item \textbf{Raw lagged responders (static).} Flat for static XGB
+    ($+0.00591$ vs.\ $+0.00594$); useful only via the ModelR aux path and the
+    engineered responder signals.
+  \item \textbf{Full-pool single window.} Infeasible in memory (${\sim}28$\,GB)
+    and unwanted given the recency result.
+  \item \textbf{Vanilla transformer and Mamba.} The vanilla transformer was
+    superseded by the inverted / cross-attention variants; Mamba was built but
+    never validated and has been removed. iTransformer and TimeXer remain as
+    \emph{unproven} candidates.
+\end{itemize}
 
 \section{Roadmap}
 In priority order: (1)~temporal bagging of the RNN models at scale;
