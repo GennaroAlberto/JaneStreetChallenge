@@ -1,0 +1,36 @@
+{
+  "model": "lstm_modelr_h128",
+  "base_model": "lstm_modelr",
+  "n_params": 1579529,
+  "fit_s": 7516.109518766403,
+  "eval_static_s": 159.00708413124084,
+  "eval_online_s": 380.6611089706421,
+  "r2_static": 0.004737280783014053,
+  "r2_online": 0.007817631558622029,
+  "kwargs": {
+    "hidden_sizes": [
+      128,
+      128,
+      128
+    ],
+    "dropout_rates": [
+      0.1,
+      0.1,
+      0.1
+    ],
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "epochs": 10,
+    "batch_size": 1,
+    "grad_clip": 1.0,
+    "early_stopping_patience": 3,
+    "lr_refit": 0.0003,
+    "device": "cpu",
+    "num_aux": 4
+  },
+  "n_train_dates": 200,
+  "n_valid_dates": 100,
+  "n_train_rows": 7312272,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-05-29T03:40:52.187963"
+}

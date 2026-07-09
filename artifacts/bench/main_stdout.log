@@ -1,0 +1,76 @@
+Run id: main  out=/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/artifacts/bench/main
+date range: 1399..1698  valid_tail=100
+data loaded: 11,028,424 rows × 143 cols in 5.9s
+train: 1399..1598 (200 dates)
+valid: 1599..1698 (100 dates)
+models: ['xgb', 'mlp', 'gru', 'gru_modelr', 'lstm_modelr', 'transformer', 'sig_transformer']
+
+======================================================================
+[17:50:42] starting model: xgb
+  kwargs: {"n_estimators": 3000, "max_depth": 6, "learning_rate": 0.05, "subsample": 0.8, "colsample_bytree": 0.5, "max_bin": 128, "tree_method": "hist", "early_stopping_rounds": 50, "n_jobs": 1}
+  rows: train=7312272  valid=3716152
+  fit time = 453.8s  params = -1
+  static eval = 6.5s  R²=+0.00587
+
+======================================================================
+[17:58:23] starting model: mlp
+  kwargs: {"hidden_sizes": [512, 512, 256], "dropout": 0.1, "lr": 0.001, "weight_decay": 0.01, "epochs": 50, "batch_size": 16384, "early_stopping_patience": 5, "device": "cpu"}
+  rows: train=7312272  valid=3716152
+  fit time = 4024.0s  params = 458753
+  static eval = 10.3s  R²=-0.00258
+
+======================================================================
+[19:05:38] starting model: gru
+  kwargs: {"hidden_sizes": [96, 96], "dropout_rates": [0.1, 0.1], "hidden_sizes_linear": [], "dropout_rates_linear": [], "lr": 0.001, "weight_decay": 0.01, "epochs": 20, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 5, "lr_refit": 0.0003, "device": "cpu"}
+  rows: train=7312272  valid=3716152
+  fit time = 5407.9s  params = 120193
+  static eval = 17.9s  R²=+0.00246
+  online-refit eval = 58.5s  R²=+0.00749
+
+======================================================================
+[20:37:02] starting model: gru_modelr
+  kwargs: {"hidden_sizes": [96, 96, 96], "dropout_rates": [0.1, 0.1, 0.1], "hidden_sizes_linear": [], "dropout_rates_linear": [], "lr": 0.001, "weight_decay": 0.01, "epochs": 20, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 5, "lr_refit": 0.0003, "device": "cpu", "num_aux": 4}
+  rows: train=7312272  valid=3716152
+Run id: main  out=/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/artifacts/bench/main
+date range: 1399..1698  valid_tail=100
+data loaded: 11,028,424 rows × 143 cols in 5.1s
+train: 1399..1598 (200 dates)
+valid: 1599..1698 (100 dates)
+models: ['xgb', 'mlp', 'gru', 'gru_modelr', 'lstm_modelr', 'transformer', 'sig_transformer']
+[20:38:02] xgb already done — loading cached result
+[20:38:02] mlp already done — loading cached result
+[20:38:02] gru already done — loading cached result
+
+======================================================================
+[20:38:02] starting model: gru_modelr
+  kwargs: {"hidden_sizes": [96, 96, 96], "dropout_rates": [0.1, 0.1, 0.1], "hidden_sizes_linear": [], "dropout_rates_linear": [], "lr": 0.001, "weight_decay": 0.01, "epochs": 10, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu", "num_aux": 4}
+  rows: train=7312272  valid=3716152
+  fit time = 10577.4s  params = 704265
+  static eval = 116.8s  R²=+0.00497
+  online-refit eval = 496.3s  R²=+0.00749
+
+======================================================================
+[23:44:33] starting model: lstm_modelr
+  kwargs: {"hidden_sizes": [96, 96, 96], "dropout_rates": [0.1, 0.1, 0.1], "hidden_sizes_linear": [], "dropout_rates_linear": [], "lr": 0.001, "weight_decay": 0.01, "epochs": 10, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu", "num_aux": 4}
+  rows: train=7312272  valid=3716152
+  fit time = 11639.6s  params = 938889
+  static eval = 105.1s  R²=+0.00425
+  online-refit eval = 317.4s  R²=+0.00798
+
+======================================================================
+[03:05:35] starting model: transformer
+  kwargs: {"d_model": 96, "n_heads": 4, "n_layers": 2, "ff_mult": 2, "dropout": 0.1, "lr": 0.0005, "weight_decay": 0.01, "epochs": 8, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu"}
+  rows: train=7312272  valid=3716152
+  fit time = 5684.8s  params = 260257
+  static eval = 60.0s  R²=+0.00474
+  online-refit eval = 241.8s  R²=+0.00500
+
+======================================================================
+[04:45:23] starting model: sig_transformer
+  kwargs: {"d_model": 96, "n_heads": 4, "n_layers": 2, "ff_mult": 2, "dropout": 0.1, "lr": 0.0005, "weight_decay": 0.01, "epochs": 8, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu", "signature_channels": [0, 1, 2, 3, 4, 5], "signature_window": 16, "signature_depth": 2, "signature_hurst": 0.1}
+  rows: train=7312272  valid=3716152
+  fit time = 6598.2s  params = 265633
+  static eval = 83.7s  R²=+0.00485
+  online-refit eval = 291.4s  R²=+0.00436
+
+ALL DONE. total = 13.45 h

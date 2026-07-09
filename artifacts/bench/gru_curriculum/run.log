@@ -1,0 +1,59 @@
+[curriculum] model=gru_modelr batches=[(700, 899), (900, 1099), (1100, 1299), (1398, 1597)] valid=1599..1698  features K=134 (lags=[0, 1, 2, 3, 4, 5, 6, 7, 8] sig=None)
+
+=== batch 1/4  dates 700..899  rows=5,978,368  COLD (lr=0.001, epochs=10) ===
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     5.0248 |       nan |  -0.0244 |     nan
+    2 |     4.9279 |       nan |   0.0121 |     nan
+    3 |     4.8951 |       nan |   0.0209 |     nan
+    4 |     4.8800 |       nan |   0.0253 |     nan
+    5 |     4.8591 |       nan |   0.0303 |     nan
+    6 |     4.8437 |       nan |   0.0329 |     nan
+    7 |     4.8237 |       nan |   0.0372 |     nan
+    8 |     4.8090 |       nan |   0.0403 |     nan
+    9 |     4.7861 |       nan |   0.0456 |     nan
+   10 |     4.7584 |       nan |   0.0516 |     nan
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:48: RuntimeWarning: Mean of empty slice
+  x_mean = np.nanmean(x, axis=0).astype(np.float64)
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:57: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  x_var = np.nanvar(x, axis=0).astype(np.float64)
+  [after batch 1] fit=66.5min  static R²=-0.13260  online R²=+0.00131
+
+=== batch 2/4  dates 900..1099  rows=6,644,352  WARM (lr=0.0003, epochs=6) ===
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     4.9175 |       nan |   0.0181 |     nan
+    2 |     4.8959 |       nan |   0.0228 |     nan
+    3 |     4.8826 |       nan |   0.0257 |     nan
+    4 |     4.8682 |       nan |   0.0289 |     nan
+    5 |     4.8557 |       nan |   0.0320 |     nan
+    6 |     4.8430 |       nan |   0.0348 |     nan
+  [after batch 2] fit=40.9min  static R²=-0.01486  online R²=+0.00498
+
+=== batch 3/4  dates 1100..1299  rows=7,472,960  WARM (lr=0.0003, epochs=6) ===
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     4.9259 |       nan |   0.0167 |     nan
+    2 |     4.9072 |       nan |   0.0205 |     nan
+    3 |     4.8962 |       nan |   0.0228 |     nan
+    4 |     4.8833 |       nan |   0.0258 |     nan
+    5 |     4.8721 |       nan |   0.0284 |     nan
+    6 |     4.8594 |       nan |   0.0313 |     nan
+  [after batch 3] fit=42.7min  static R²=-0.00066  online R²=+0.00672
+
+=== batch 4/4  dates 1398..1597  rows=7,308,400  WARM (lr=0.0003, epochs=6) ===
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     4.9314 |       nan |   0.0179 |     nan
+    2 |     4.9081 |       nan |   0.0228 |     nan
+    3 |     4.8922 |       nan |   0.0263 |     nan
+    4 |     4.8787 |       nan |   0.0289 |     nan
+    5 |     4.8644 |       nan |   0.0323 |     nan
+    6 |     4.8475 |       nan |   0.0358 |     nan
+  [after batch 4] fit=41.3min  static R²=+0.00353  online R²=+0.00765
+
+=== curriculum summary (online R² after each batch) ===
+  batch 1 (700..899): +0.00131
+  batch 2 (900..1099): +0.00498
+  batch 3 (1100..1299): +0.00672
+  batch 4 (1398..1597): +0.00765

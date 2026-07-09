@@ -1,0 +1,44 @@
+# Example bag experiment — edit this to pick your dates, models, and mix.
+#
+# Run with:
+#   uv run python scripts/run_experiment.py --config experiments/example_bag.yaml
+#   (add --dry-run to just print the plan)
+#
+# Prereq: the `data` pool must already be precomputed, e.g.
+#   uv run python scripts/precompute_dataset.py --min-date 700 --max-date 1698 \
+#       --train-until 1598 --lagged-responders 0,1,2,3,4,5,6,7,8 \
+#       --out artifacts/precomputed/pool700_lags
+
+data: artifacts/precomputed/pool700_lags   # which dates + features (the precompute)
+out:  artifacts/bench/exp_bag_A             # where members + ensemble.json land
+valid_lo: 1599                              # validation tail (scored, never trained on)
+valid_hi: 1698
+
+# Each member = a model trained on a resample of the pool. More seeds = more
+# bagging diversity. resample_frac is the fraction of the ~900-date pool each
+# member draws (0.6 ≈ 540 dates ≈ ~9 GB peak, fits a 16 GB Mac one-at-a-time).
+members:
+  - model: lstm_modelr        # our strongest single model
+    seeds: [1, 2, 3]
+    resample_mode: subsample  # subsample | bootstrap | window
+    resample_frac: 0.6
+
+  - model: timexer            # endogenous lagged-responder + exogenous features
+    seeds: [1, 2]
+    resample_mode: subsample
+    resample_frac: 0.6
+
+  # - model: gru_modelr
+  #   seeds: [1, 2]
+  #   resample_mode: subsample
+  #   resample_frac: 0.6
+  # - model: itransformer
+  #   seeds: [1]
+  #   resample_mode: subsample
+  #   resample_frac: 0.6
+
+# Optional: fold in prediction streams produced elsewhere (e.g. xgb from bench).
+# extra_preds:
+#   - artifacts/bench/run2_280d/preds/xgb_static.npz
+
+blend_stream: online          # 'online' (refit models) or 'static'

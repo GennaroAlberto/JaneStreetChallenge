@@ -1,0 +1,23 @@
+[s1] model=gru seed=1 resample=subsample pool=[700,1597](898 dates) → 314 draws / 314 unique  valid=1599..1698
+  train FitData: 10,848,376 rows × 125 in 5.3s
+[recurrent] device=cpu | input=125
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     0.9974 |    0.9974 |   0.0029 |  0.0024
+    2 |     0.9895 |    0.9966 |   0.0104 |  0.0031
+    3 |     0.9866 |    0.9961 |   0.0128 |  0.0035
+    4 |     0.9845 |    0.9959 |   0.0150 |  0.0038
+    5 |     0.9823 |    0.9959 |   0.0173 |  0.0038
+    6 |     0.9809 |    0.9958 |   0.0188 |  0.0039
+    7 |     0.9787 |    0.9958 |   0.0211 |  0.0038
+    8 |     0.9769 |    0.9958 |   0.0232 |  0.0037
+    9 |     0.9749 |    0.9958 |   0.0250 |  0.0037
+   10 |     0.9723 |    0.9957 |   0.0277 |  0.0038
+early stop at epoch 10 (best=6, R²=0.0039)
+  fit: 18.1 min
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:48: RuntimeWarning: Mean of empty slice
+  x_mean = np.nanmean(x, axis=0).astype(np.float64)
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:57: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  x_var = np.nanvar(x, axis=0).astype(np.float64)
+  static R² = +0.00204
+  online R² = +0.00631
+  written → artifacts/bench/bag700/gru_s1.json

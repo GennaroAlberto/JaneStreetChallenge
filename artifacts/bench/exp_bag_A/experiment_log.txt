@@ -1,0 +1,9 @@
+=== experiment: experiments/example_bag.yaml ===
+data=artifacts/precomputed/pool700_lags  out=artifacts/bench/exp_bag_A  valid=1599..1698  blend=online
+5 bag members:
+  - lstm_modelr_subsample60_s1
+  - lstm_modelr_subsample60_s2
+  - lstm_modelr_subsample60_s3
+  - timexer_subsample60_s1
+  - timexer_subsample60_s2
+(dry run — not training)

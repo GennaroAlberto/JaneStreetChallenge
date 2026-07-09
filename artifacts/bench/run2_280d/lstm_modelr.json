@@ -1,0 +1,36 @@
+{
+  "model": "lstm_modelr",
+  "base_model": "lstm_modelr",
+  "n_params": 938889,
+  "fit_s": 14756.731543064117,
+  "eval_static_s": 185.60637211799622,
+  "eval_online_s": 556.7033438682556,
+  "r2_static": 0.006371371615644161,
+  "r2_online": 0.009087338046795623,
+  "kwargs": {
+    "hidden_sizes": [
+      96,
+      96,
+      96
+    ],
+    "dropout_rates": [
+      0.1,
+      0.1,
+      0.1
+    ],
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "epochs": 10,
+    "batch_size": 1,
+    "grad_clip": 1.0,
+    "early_stopping_patience": 3,
+    "lr_refit": 0.0003,
+    "device": "cpu",
+    "num_aux": 4
+  },
+  "n_train_dates": 280,
+  "n_valid_dates": 100,
+  "n_train_rows": 10237568,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-05-28T20:27:00.702381"
+}

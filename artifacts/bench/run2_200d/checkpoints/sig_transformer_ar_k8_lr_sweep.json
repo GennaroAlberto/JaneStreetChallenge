@@ -1,0 +1,24 @@
+{
+  "ckpt": "artifacts/bench/run2_200d/checkpoints/sig_transformer_ar_k8.pkl",
+  "min_date": 1399,
+  "max_date": 1698,
+  "valid": 100,
+  "results": [
+    {
+      "lr_refit": 0.0,
+      "r2": 0.00588056627885869,
+      "seconds": 90.35127687454224
+    },
+    {
+      "lr_refit": 3e-05,
+      "r2": 0.006232630736506484,
+      "seconds": 291.34656834602356
+    }
+  ],
+  "best": {
+    "lr_refit": 3e-05,
+    "r2": 0.006232630736506484,
+    "seconds": 291.34656834602356
+  },
+  "timestamp": "2026-05-30T12:25:49.354862"
+}

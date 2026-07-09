@@ -1,0 +1,25 @@
+{
+  "model": "xgb",
+  "n_params": -1,
+  "fit_s": 453.81787300109863,
+  "eval_static_s": 6.544332981109619,
+  "eval_online_s": null,
+  "r2_static": 0.00587383772529404,
+  "r2_online": null,
+  "kwargs": {
+    "n_estimators": 3000,
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.5,
+    "max_bin": 128,
+    "tree_method": "hist",
+    "early_stopping_rounds": 50,
+    "n_jobs": 1
+  },
+  "n_train_dates": 200,
+  "n_valid_dates": 100,
+  "n_train_rows": 7312272,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-05-14T17:58:23.137393"
+}

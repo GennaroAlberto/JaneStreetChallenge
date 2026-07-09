@@ -1,0 +1,19 @@
+{
+  "tag": "s1",
+  "model": "gru",
+  "seed": 1,
+  "resample_mode": "subsample",
+  "pool_lo": 700,
+  "pool_hi": 1597,
+  "resample_frac": 0.35,
+  "n_train_dates_unique": 314,
+  "train_lo": null,
+  "train_hi": null,
+  "valid_lo": 1599,
+  "valid_hi": 1698,
+  "n_train_rows": 10848376,
+  "fit_s": 1083.630922794342,
+  "r2_static": 0.002043774453198366,
+  "r2_online": 0.006310056486681037,
+  "timestamp": "2026-07-08T14:49:10.421494"
+}

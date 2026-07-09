@@ -1,0 +1,5 @@
+[s1] model=timexer seed=1 resample=subsample pool=[700,1597](898 dates) → 314 draws / 314 unique  valid=1599..1698
+  train FitData: 10,848,376 rows × 134 in 7.2s
+  timexer endo_channels = [125, 126, 127, 128, 129, 130, 131, 132, 133] (['responder_0_lag1d', 'responder_1_lag1d', 'responder_2_lag1d', 'responder_3_lag1d', 'responder_4_lag1d', 'responder_5_lag1d', 'responder_6_lag1d', 'responder_7_lag1d', 'responder_8_lag1d'])
+[transformer] device=cpu input=134
+epoch   1 | loss 1.0241 | train_R² -0.0194 | val_R² -0.0044

@@ -1,0 +1,22 @@
+Run id: smoke  out=/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/artifacts/bench/smoke
+date range: 1670..1698  valid_tail=9
+data loaded: 1,082,224 rows × 143 cols in 0.3s
+train: 1670..1689 (20 dates)
+valid: 1690..1698 (9 dates)
+models: ['xgb', 'mlp']
+
+======================================================================
+[14:43:39] starting model: xgb
+  kwargs: {"n_estimators": 2000, "max_depth": 6, "learning_rate": 0.05, "subsample": 0.8, "colsample_bytree": 0.5, "early_stopping_rounds": 50, "n_jobs": 1}
+  rows: train=743424  valid=338800
+  fit time = 19.9s  params = -1
+  static eval = 0.3s  R²=+0.00262
+
+======================================================================
+[14:43:59] starting model: mlp
+  kwargs: {"hidden_sizes": [512, 512, 256], "dropout": 0.1, "lr": 0.001, "weight_decay": 0.01, "epochs": 25, "batch_size": 16384, "early_stopping_patience": 4, "device": "cpu"}
+  rows: train=743424  valid=338800
+  fit time = 35.1s  params = 458753
+  static eval = 0.7s  R²=-0.00329
+
+ALL DONE. total = 0.02 h

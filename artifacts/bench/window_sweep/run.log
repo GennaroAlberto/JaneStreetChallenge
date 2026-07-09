@@ -1,0 +1,120 @@
+=== window-length recency sweep: model=gru lengths=[50, 100, 200, 400, 898] ending at 1597  decay_halflife=0.0 ===
+
+--- window length 50 (dates 1548..1597) ---
+[win50] model=gru seed=42 resample=window pool=[700,1597](898 dates) → 50 draws / 50 unique  valid=1599..1698
+  train FitData: 1,855,656 rows × 134 in 0.8s
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     1.0200 |    1.0000 |  -0.0147 | -0.0002
+    2 |     0.9993 |    0.9992 |   0.0014 |  0.0007
+    3 |     0.9960 |    0.9988 |   0.0042 |  0.0011
+    4 |     0.9944 |    0.9984 |   0.0071 |  0.0015
+    5 |     0.9926 |    0.9981 |   0.0074 |  0.0018
+    6 |     0.9880 |    0.9983 |   0.0114 |  0.0016
+    7 |     0.9869 |    0.9981 |   0.0127 |  0.0018
+    8 |     0.9846 |    0.9980 |   0.0143 |  0.0018
+    9 |     0.9823 |    0.9980 |   0.0166 |  0.0018
+   10 |     0.9805 |    0.9980 |   0.0190 |  0.0018
+   11 |     0.9763 |    0.9980 |   0.0226 |  0.0017
+   12 |     0.9740 |    0.9980 |   0.0248 |  0.0018
+early stop at epoch 12 (best=8, R²=0.0018)
+  fit: 9.4 min
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:48: RuntimeWarning: Mean of empty slice
+  x_mean = np.nanmean(x, axis=0).astype(np.float64)
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:57: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  x_var = np.nanvar(x, axis=0).astype(np.float64)
+  static R² = +0.00104
+  online R² = +0.00316
+  written → artifacts/bench/window_sweep/gru_win50.json
+  length   50 (dates 1548..1597): static=+0.00104  online=+0.00316
+
+--- window length 100 (dates 1498..1597) ---
+[win100] model=gru seed=42 resample=window pool=[700,1597](898 dates) → 100 draws / 100 unique  valid=1599..1698
+  train FitData: 3,719,056 rows × 134 in 1.7s
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     1.0118 |    0.9993 |  -0.0072 |  0.0006
+    2 |     0.9975 |    0.9979 |   0.0026 |  0.0019
+    3 |     0.9942 |    0.9974 |   0.0058 |  0.0025
+    4 |     0.9916 |    0.9970 |   0.0077 |  0.0028
+    5 |     0.9886 |    0.9968 |   0.0107 |  0.0029
+    6 |     0.9865 |    0.9969 |   0.0135 |  0.0030
+    7 |     0.9854 |    0.9967 |   0.0145 |  0.0032
+    8 |     0.9836 |    0.9965 |   0.0158 |  0.0034
+    9 |     0.9806 |    0.9965 |   0.0192 |  0.0033
+   10 |     0.9783 |    0.9965 |   0.0202 |  0.0033
+   11 |     0.9757 |    0.9967 |   0.0243 |  0.0030
+   12 |     0.9733 |    0.9969 |   0.0260 |  0.0027
+early stop at epoch 12 (best=8, R²=0.0034)
+  fit: 12.8 min
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:48: RuntimeWarning: Mean of empty slice
+  x_mean = np.nanmean(x, axis=0).astype(np.float64)
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:57: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  x_var = np.nanvar(x, axis=0).astype(np.float64)
+  static R² = +0.00379
+  online R² = +0.00544
+  written → artifacts/bench/window_sweep/gru_win100.json
+  length  100 (dates 1498..1597): static=+0.00379  online=+0.00544
+
+--- window length 200 (dates 1398..1597) ---
+[win200] model=gru seed=42 resample=window pool=[700,1597](898 dates) → 200 draws / 200 unique  valid=1599..1698
+  train FitData: 7,308,400 rows × 134 in 3.4s
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     1.0037 |    0.9982 |  -0.0026 |  0.0016
+    2 |     0.9953 |    0.9970 |   0.0055 |  0.0028
+    3 |     0.9921 |    0.9965 |   0.0091 |  0.0033
+    4 |     0.9894 |    0.9964 |   0.0124 |  0.0034
+    5 |     0.9867 |    0.9960 |   0.0156 |  0.0037
+    6 |     0.9842 |    0.9963 |   0.0191 |  0.0034
+    7 |     0.9815 |    0.9962 |   0.0216 |  0.0035
+    8 |     0.9797 |    0.9961 |   0.0238 |  0.0036
+    9 |     0.9770 |    0.9963 |   0.0265 |  0.0033
+early stop at epoch 9 (best=5, R²=0.0037)
+  fit: 13.6 min
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:48: RuntimeWarning: Mean of empty slice
+  x_mean = np.nanmean(x, axis=0).astype(np.float64)
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:57: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  x_var = np.nanvar(x, axis=0).astype(np.float64)
+  static R² = +0.00298
+  online R² = +0.00588
+  written → artifacts/bench/window_sweep/gru_win200.json
+  length  200 (dates 1398..1597): static=+0.00298  online=+0.00588
+
+--- window length 400 (dates 1198..1597) ---
+[win400] model=gru seed=42 resample=window pool=[700,1597](898 dates) → 400 draws / 400 unique  valid=1599..1698
+  train FitData: 14,703,920 rows × 134 in 14.2s
+[recurrent] device=cpu | input=134
+epoch | train_loss |  val_loss | train_R2 |  val_R2
+    1 |     1.0001 |    0.9971 |   0.0014 |  0.0027
+    2 |     0.9920 |    0.9960 |   0.0086 |  0.0038
+    3 |     0.9888 |    0.9955 |   0.0120 |  0.0043
+    4 |     0.9864 |    0.9955 |   0.0147 |  0.0043
+    5 |     0.9844 |    0.9953 |   0.0168 |  0.0044
+    6 |     0.9820 |    0.9955 |   0.0197 |  0.0042
+    7 |     0.9804 |    0.9954 |   0.0216 |  0.0041
+    8 |     0.9782 |    0.9956 |   0.0241 |  0.0040
+    9 |     0.9767 |    0.9955 |   0.0260 |  0.0041
+early stop at epoch 9 (best=5, R²=0.0044)
+  fit: 25.2 min
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:48: RuntimeWarning: Mean of empty slice
+  x_mean = np.nanmean(x, axis=0).astype(np.float64)
+/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/src/janestreet/data/scaler.py:57: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  x_var = np.nanvar(x, axis=0).astype(np.float64)
+  static R² = +0.00507
+  online R² = +0.00712
+  written → artifacts/bench/window_sweep/gru_win400.json
+  length  400 (dates 1198..1597): static=+0.00507  online=+0.00712
+
+--- window length 898 (dates 700..1597) ---
+[win898] model=gru seed=42 resample=window pool=[700,1597](898 dates) → 898 draws / 898 unique  valid=1599..1698
+  train FitData: 31,010,848 rows × 134 in 89.2s
+  length 898: no result (training failed?)
+
+=== recency curve (online R² vs window length) ===
+    50d  online=+0.00316  ######
+   100d  online=+0.00544  ##########
+   200d  online=+0.00588  ###########
+   400d  online=+0.00712  ##############
+
+written → artifacts/bench/window_sweep/sweep_summary.json

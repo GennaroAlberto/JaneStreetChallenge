@@ -1,0 +1,65 @@
+[project]
+name = "janestreet"
+version = "0.1.0"
+description = "Jane Street Real-Time Market Data Forecasting — flexible training/eval pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Alberto Gennaro", email = "alberto.gennaro@studenti.polito.it" }
+]
+dependencies = [
+    "einops>=0.8.2",
+    "numpy>=2.4.4",
+    "pandas>=3.0.3",
+    "polars>=1.40.1",
+    "pyarrow>=24.0.0",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.8.0",
+    "torch>=2.12.0",
+    "tqdm>=4.67.3",
+    "xgboost>=3.2.0",
+]
+
+# Optional: iisignature gives the *minimal* (Lyndon-basis) log-signature.
+# Our naive log-sig (signature.py) keeps level 3 as a full d³ tensor; with
+# iisignature we get the true Lie-algebra dim ((d³ − d)/3 at level 3),
+# i.e. for d=9 the level-3 component shrinks from 729 to 240 dims (−65 %).
+# SignatureBlock falls back to the naive impl if iisignature isn't
+# installed, so this group is opt-in.
+[project.optional-dependencies]
+logsig-minimal = ["iisignature>=0.24.0"]
+
+[project.scripts]
+js = "janestreet.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "pyright>=1.1.409",
+    "ruff>=0.15.12",
+    "pytest>=8.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "PL", "NPY", "PD"]
+ignore = ["E501", "PLR0913", "PLR0915", "PLR2004", "PLR0912", "PLW2901", "PLW0108", "E702"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+# PyTorch ships its public surface via __all__; pyright flags every torch.xxx
+# as private. Silence the noise — it makes real errors visible.
+reportPrivateImportUsage = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalCall = "none"
+reportOptionalSubscript = "none"

@@ -1,0 +1,27 @@
+# Python envs / caches
+.venv/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Editor / OS
+.DS_Store
+
+# Claude Code worktrees / infra
+.claude/
+
+# Large Kaggle input data (download from the competition)
+/data/
+
+# Large / regenerable artifacts
+/artifacts/precomputed/
+*.npz
+*.pkl
+*.mmap
+*.f16.npy
+*.f32.npy
+*.i16.npy
+
+# Stray non-project dir that leaked into the worktree
+/Documents/

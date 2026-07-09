@@ -1,0 +1,45 @@
+{
+  "model": "mlp_logsig_min_ar_k8_d3",
+  "base_model": "mlp_sig",
+  "n_params": 374785,
+  "fit_s": 4245.6279010772705,
+  "eval_static_s": 60.477389097213745,
+  "eval_online_s": 131.90738201141357,
+  "r2_static": 0.006136061777598512,
+  "r2_online": 0.0065705747085044175,
+  "kwargs": {
+    "hidden_sizes": [
+      512,
+      256,
+      128
+    ],
+    "dropout": 0.1,
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "epochs": 15,
+    "batch_size": 1,
+    "grad_clip": 1.0,
+    "early_stopping_patience": 4,
+    "lr_refit": 3e-05,
+    "device": "cpu",
+    "signature_channels": [
+      13,
+      63,
+      42,
+      33,
+      70,
+      22,
+      20,
+      56
+    ],
+    "signature_window": 16,
+    "signature_depth": 3,
+    "signature_hurst": 0.1,
+    "signature_mode": "log_signature_minimal"
+  },
+  "n_train_dates": 200,
+  "n_valid_dates": 100,
+  "n_train_rows": 7312272,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-07-06T21:12:45.434629"
+}

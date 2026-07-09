@@ -1,0 +1,37 @@
+{
+  "data": "artifacts/precomputed/pool700_lags",
+  "train": [
+    1399,
+    1598
+  ],
+  "valid": [
+    1599,
+    1698
+  ],
+  "n_estimators": 1500,
+  "seed": 42,
+  "results": [
+    {
+      "variant": "base",
+      "n_features": 125,
+      "best_iter": 99,
+      "r2_weighted": 0.0059382852749934045,
+      "delta_vs_base": 0.0
+    },
+    {
+      "variant": "base+lags",
+      "n_features": 134,
+      "best_iter": 115,
+      "r2_weighted": 0.005909001826756466,
+      "delta_vs_base": -2.9283448236938625e-05
+    },
+    {
+      "variant": "base+lags+signal",
+      "n_features": 139,
+      "best_iter": 167,
+      "r2_weighted": 0.006241165212097499,
+      "delta_vs_base": 0.00030287993710409467
+    }
+  ],
+  "timestamp": "2026-07-08T17:22:15.389309"
+}

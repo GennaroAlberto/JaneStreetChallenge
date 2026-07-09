@@ -1,0 +1,41 @@
+{
+  "model": "sig_transformer_selected",
+  "base_model": "sig_transformer",
+  "n_params": 265633,
+  "fit_s": 6115.296657800674,
+  "eval_static_s": 86.9271490573883,
+  "eval_online_s": 284.90577602386475,
+  "r2_static": 0.0044505117254523,
+  "r2_online": 0.0036397684050816226,
+  "kwargs": {
+    "d_model": 96,
+    "n_heads": 4,
+    "n_layers": 2,
+    "ff_mult": 2,
+    "dropout": 0.1,
+    "lr": 0.0005,
+    "weight_decay": 0.01,
+    "epochs": 8,
+    "batch_size": 1,
+    "grad_clip": 1.0,
+    "early_stopping_patience": 3,
+    "lr_refit": 0.0003,
+    "device": "cpu",
+    "signature_channels": [
+      6,
+      13,
+      33,
+      16,
+      53,
+      4
+    ],
+    "signature_window": 16,
+    "signature_depth": 2,
+    "signature_hurst": 0.1
+  },
+  "n_train_dates": 200,
+  "n_valid_dates": 100,
+  "n_train_rows": 7312272,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-05-29T11:34:32.836679"
+}

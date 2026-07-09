@@ -1,0 +1,19 @@
+{
+  "tag": "win100",
+  "model": "gru",
+  "seed": 42,
+  "resample_mode": "window",
+  "pool_lo": 700,
+  "pool_hi": 1597,
+  "resample_frac": 0.63,
+  "n_train_dates_unique": 100,
+  "train_lo": 1498,
+  "train_hi": 1597,
+  "valid_lo": 1599,
+  "valid_hi": 1698,
+  "n_train_rows": 3719056,
+  "fit_s": 765.4733200073242,
+  "r2_static": 0.0037891233405468183,
+  "r2_online": 0.005443494602231147,
+  "timestamp": "2026-07-08T22:12:41.431110"
+}

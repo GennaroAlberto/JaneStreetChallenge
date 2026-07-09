@@ -1,0 +1,28 @@
+{
+  "model": "mlp",
+  "n_params": 458753,
+  "fit_s": 4023.997584104538,
+  "eval_static_s": 10.345417976379395,
+  "eval_online_s": null,
+  "r2_static": -0.002578362772334586,
+  "r2_online": null,
+  "kwargs": {
+    "hidden_sizes": [
+      512,
+      512,
+      256
+    ],
+    "dropout": 0.1,
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "epochs": 50,
+    "batch_size": 16384,
+    "early_stopping_patience": 5,
+    "device": "cpu"
+  },
+  "n_train_dates": 200,
+  "n_valid_dates": 100,
+  "n_train_rows": 7312272,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-05-14T19:05:37.846363"
+}

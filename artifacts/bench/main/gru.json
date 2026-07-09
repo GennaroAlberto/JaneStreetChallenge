@@ -1,0 +1,34 @@
+{
+  "model": "gru",
+  "n_params": 120193,
+  "fit_s": 5407.879628896713,
+  "eval_static_s": 17.90787363052368,
+  "eval_online_s": 58.476109743118286,
+  "r2_static": 0.002461039542572041,
+  "r2_online": 0.007486037066748663,
+  "kwargs": {
+    "hidden_sizes": [
+      96,
+      96
+    ],
+    "dropout_rates": [
+      0.1,
+      0.1
+    ],
+    "hidden_sizes_linear": [],
+    "dropout_rates_linear": [],
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "epochs": 20,
+    "batch_size": 1,
+    "grad_clip": 1.0,
+    "early_stopping_patience": 5,
+    "lr_refit": 0.0003,
+    "device": "cpu"
+  },
+  "n_train_dates": 200,
+  "n_valid_dates": 100,
+  "n_train_rows": 7312272,
+  "n_valid_rows": 3716152,
+  "timestamp": "2026-05-14T20:37:02.628909"
+}

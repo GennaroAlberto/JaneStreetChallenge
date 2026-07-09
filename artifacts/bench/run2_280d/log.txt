@@ -1,0 +1,35 @@
+Run id: run2_280d  out=/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/artifacts/bench/run2_280d
+date range: 1319..1698  valid_tail=100
+data loaded: 13,953,720 rows × 143 cols in 8.3s
+train: 1319..1598 (280 dates)
+valid: 1599..1698 (100 dates)
+slices held: train=10,237,568 rows  valid+1=3,753,904 rows
+models: ['xgb', 'gru_modelr', 'lstm_modelr']
+
+======================================================================
+[13:03:38] starting model: xgb (base: xgb)
+  kwargs: {"n_estimators": 3000, "max_depth": 6, "learning_rate": 0.05, "subsample": 0.8, "colsample_bytree": 0.5, "max_bin": 128, "tree_method": "hist", "early_stopping_rounds": 50, "n_jobs": 1}
+  rows: train=10237568  valid=3716152
+  fit time = 964.1s  params = -1
+  checkpoint skipped for xgb (XGB; using .npz preds instead)
+  static eval = 9.4s  R²=+0.00684
+
+======================================================================
+[13:19:52] starting model: gru_modelr (base: gru_modelr)
+  kwargs: {"hidden_sizes": [96, 96, 96], "dropout_rates": [0.1, 0.1, 0.1], "hidden_sizes_linear": [], "dropout_rates_linear": [], "lr": 0.001, "weight_decay": 0.01, "epochs": 10, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu", "num_aux": 4}
+  rows: train=10237568  valid=3716152
+  fit time = 9639.6s  params = 704265
+  checkpoint saved → run2_280d/checkpoints/gru_modelr.pkl
+  static eval = 100.5s  R²=+0.00763
+  online-refit eval = 382.0s  R²=+0.00893
+
+======================================================================
+[16:08:37] starting model: lstm_modelr (base: lstm_modelr)
+  kwargs: {"hidden_sizes": [96, 96, 96], "dropout_rates": [0.1, 0.1, 0.1], "lr": 0.001, "weight_decay": 0.01, "epochs": 10, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu", "num_aux": 4}
+  rows: train=10237568  valid=3716152
+  fit time = 14756.7s  params = 938889
+  checkpoint saved → run2_280d/checkpoints/lstm_modelr.pkl
+  static eval = 185.6s  R²=+0.00637
+  online-refit eval = 556.7s  R²=+0.00909
+
+ALL DONE. total = 7.39 h

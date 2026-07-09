@@ -1,0 +1,43 @@
+{
+  "preds": [
+    "artifacts/bench/run2_280d/preds/xgb_static.npz",
+    "artifacts/bench/run2_280d/preds/gru_modelr_online.npz",
+    "artifacts/bench/run2_280d/preds/lstm_modelr_online.npz",
+    "artifacts/bench/run2_200d/preds/sig_transformer_ar_k8_online_lr3em05.npz"
+  ],
+  "individual": [
+    {
+      "name": "xgb_static",
+      "path": "artifacts/bench/run2_280d/preds/xgb_static.npz",
+      "r2": 0.006841276853567391
+    },
+    {
+      "name": "gru_modelr_online",
+      "path": "artifacts/bench/run2_280d/preds/gru_modelr_online.npz",
+      "r2": 0.008927125582521733
+    },
+    {
+      "name": "lstm_modelr_online",
+      "path": "artifacts/bench/run2_280d/preds/lstm_modelr_online.npz",
+      "r2": 0.009087363618102362
+    },
+    {
+      "name": "sig_transformer_ar_k8_online_lr3em05",
+      "path": "artifacts/bench/run2_200d/preds/sig_transformer_ar_k8_online_lr3em05.npz",
+      "r2": 0.006227922998952917
+    }
+  ],
+  "simple_avg_r2": 0.010104438875493282,
+  "optimal_blend": {
+    "weights": {
+      "xgb_static": 1.0,
+      "gru_modelr_online": 0.0,
+      "lstm_modelr_online": 0.0,
+      "sig_transformer_ar_k8_online_lr3em05": 0.0
+    },
+    "r2_blend_train_half": 0.0074551425643755165,
+    "r2_blend_test_half": 0.005869456177654886,
+    "r2_blend_full_valid": 0.006841276853567391
+  },
+  "timestamp": "2026-05-30T12:31:44.829715"
+}

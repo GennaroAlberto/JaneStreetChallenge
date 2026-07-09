@@ -1,0 +1,18 @@
+Run id: run2_200d  out=/Users/alberto/Desktop/code/JaneStreetChallenge/.claude/worktrees/infallible-robinson-eb8ba6/artifacts/bench/run2_200d
+date range: 1399..1698  valid_tail=100
+data loaded: 11,028,424 rows × 143 cols in 7.2s
+train: 1399..1598 (200 dates)
+valid: 1599..1698 (100 dates)
+slices held: train=7,312,272 rows  valid+1=3,753,904 rows
+models: ['sig_transformer_ar_k8']
+
+======================================================================
+[17:46:22] starting model: sig_transformer_ar_k8 (base: sig_transformer)
+  kwargs: {"d_model": 96, "n_heads": 4, "n_layers": 2, "ff_mult": 2, "dropout": 0.1, "lr": 0.0005, "weight_decay": 0.01, "epochs": 8, "batch_size": 1, "grad_clip": 1.0, "early_stopping_patience": 3, "lr_refit": 0.0003, "device": "cpu", "signature_channels": [13, 63, 42, 33, 70, 22, 20, 56], "signature_window": 16, "signature_depth": 2, "signature_hurst": 0.1}
+  rows: train=7312272  valid=3716152
+  fit time = 12209.8s  params = 268897
+  checkpoint saved → run2_200d/checkpoints/sig_transformer_ar_k8.pkl
+  static eval = 172.7s  R²=+0.00594
+  online-refit eval = 575.2s  R²=+0.00446
+
+ALL DONE. total = 3.60 h

@@ -1,0 +1,50 @@
+{
+  "preds": [
+    "artifacts/bench/run2_280d/preds/xgb_static.npz",
+    "artifacts/bench/run2_280d/preds/gru_modelr_static.npz",
+    "artifacts/bench/run2_280d/preds/gru_modelr_online.npz",
+    "artifacts/bench/run2_280d/preds/lstm_modelr_static.npz",
+    "artifacts/bench/run2_280d/preds/lstm_modelr_online.npz"
+  ],
+  "individual": [
+    {
+      "name": "xgb_static",
+      "path": "artifacts/bench/run2_280d/preds/xgb_static.npz",
+      "r2": 0.006841276853567391
+    },
+    {
+      "name": "gru_modelr_static",
+      "path": "artifacts/bench/run2_280d/preds/gru_modelr_static.npz",
+      "r2": 0.007626305051454341
+    },
+    {
+      "name": "gru_modelr_online",
+      "path": "artifacts/bench/run2_280d/preds/gru_modelr_online.npz",
+      "r2": 0.008927125582521733
+    },
+    {
+      "name": "lstm_modelr_static",
+      "path": "artifacts/bench/run2_280d/preds/lstm_modelr_static.npz",
+      "r2": 0.00637137435473345
+    },
+    {
+      "name": "lstm_modelr_online",
+      "path": "artifacts/bench/run2_280d/preds/lstm_modelr_online.npz",
+      "r2": 0.009087363618102362
+    }
+  ],
+  "simple_avg_r2": 0.010175883808975827,
+  "optimal_blend": {
+    "weights": {
+      "xgb_static": 0.0,
+      "gru_modelr_static": 0.21199836701913774,
+      "gru_modelr_online": 0.24596362291376775,
+      "lstm_modelr_static": 0.2670776105963548,
+      "lstm_modelr_online": 0.2749603994707398
+    },
+    "r2_blend_train_half": 0.010098769086296477,
+    "r2_blend_test_half": 0.009201433745574472,
+    "r2_blend_full_valid": 0.009751384255740958
+  },
+  "timestamp": "2026-05-29T01:25:56.894407"
+}

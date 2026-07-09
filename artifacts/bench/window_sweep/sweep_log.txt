@@ -1,0 +1,24 @@
+=== window-length recency sweep: model=gru lengths=[50, 100, 200, 400, 898] ending at 1597  decay_halflife=0.0 ===
+
+--- window length 50 (dates 1548..1597) ---
+  length   50 (dates 1548..1597): static=+0.00104  online=+0.00316
+
+--- window length 100 (dates 1498..1597) ---
+  length  100 (dates 1498..1597): static=+0.00379  online=+0.00544
+
+--- window length 200 (dates 1398..1597) ---
+  length  200 (dates 1398..1597): static=+0.00298  online=+0.00588
+
+--- window length 400 (dates 1198..1597) ---
+  length  400 (dates 1198..1597): static=+0.00507  online=+0.00712
+
+--- window length 898 (dates 700..1597) ---
+  length 898: no result (training failed?)
+
+=== recency curve (online R² vs window length) ===
+    50d  online=+0.00316  ######
+   100d  online=+0.00544  ##########
+   200d  online=+0.00588  ###########
+   400d  online=+0.00712  ##############
+
+written → artifacts/bench/window_sweep/sweep_summary.json

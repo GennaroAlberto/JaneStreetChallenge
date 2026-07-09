@@ -1,0 +1,36 @@
+{
+  "mode": "residual",
+  "base": "lstm_modelr_online",
+  "streams": [
+    "artifacts/bench/run2_280d/preds/xgb_static.npz",
+    "artifacts/bench/run2_280d/preds/gru_modelr_online.npz",
+    "artifacts/bench/run2_280d/preds/lstm_modelr_online.npz",
+    "artifacts/bench/run3_sig_v3/preds/mlp_logsig_min_ar_k8_d3_online.npz"
+  ],
+  "per_model_r2": {
+    "xgb_static": 0.006841276853567391,
+    "gru_modelr_online": 0.008927125582521733,
+    "lstm_modelr_online": 0.009087363618102362,
+    "mlp_logsig_min_ar_k8_d3_online": 0.006570545417326046
+  },
+  "simple_avg_r2_full_valid": 0.01026865129599408,
+  "simple_avg_r2_train_half": 0.010637996539812566,
+  "simple_avg_r2_test_half": 0.009683934902533942,
+  "stacker_r2_train_half": 0.012082628751817648,
+  "stacker_r2_test_half": 0.009787768966305732,
+  "feature_importances": {
+    "lstm_modelr_online": 0.09167427569627762,
+    "xgb_static": 0.09785842150449753,
+    "xgb_static_minus_base": 0.3031831383705139,
+    "gru_modelr_online": 0.08640608936548233,
+    "gru_modelr_online_minus_base": 0.22978031635284424,
+    "mlp_logsig_min_ar_k8_d3_online": 0.07796837389469147,
+    "mlp_logsig_min_ar_k8_d3_online_minus_base": 0.11312943696975708
+  },
+  "xgb_kwargs": {
+    "n_estimators": 200,
+    "max_depth": 3,
+    "learning_rate": 0.03
+  },
+  "timestamp": "2026-07-07T00:36:53.589158"
+}
