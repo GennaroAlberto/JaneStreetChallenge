@@ -1,0 +1,154 @@
+\chapter[Training Diagnostics]{Training Diagnostics: What Learning Looks Like at
+\texorpdfstring{$R^2 = 0.01$}{R2 = 0.01}}
+\label{ch:diagnostics}
+
+Most practitioners' instincts about training curves were calibrated on
+problems where models reach 90\% accuracy. Those instincts misfire badly at
+$R^2 = 0.01$, in both directions: healthy runs look broken, and broken runs
+look healthy. This chapter recalibrates the eyes, then gives the debugging
+ladder we used when things actually were broken.
+
+\section{Recalibrating: numbers that look wrong but are right}
+
+\begin{itemize}
+\item \textbf{The loss barely moves --- forever.} Training on
+  $1 - \Rw$, a perfect model converges to $\approx 0.986$; a useless one
+  sits at $1.000$. The \emph{entire dynamic range of the problem} lives
+  between 1.00 and 0.98. Plot the third and fourth decimals or plot
+  nothing. (Our logs print losses to five places for exactly this
+  reason.)
+\item \textbf{Epoch 1 is worse than doing nothing.} A freshly initialized
+  network outputs nonzero noise, which scores \emph{negative} against the
+  zero-origin metric (train $R^2 \approx -0.02$ is typical). It should
+  cross zero within an epoch or two and creep upward. Panic only if it
+  doesn't cross.
+\item \textbf{Validation $R^2$ of $+0.008$ is a good model.} Internalize
+  the ladder of Chapter~\ref{ch:metric}. And its converse ---
+\item \textbf{validation $R^2$ of $+0.05$ is an emergency}, not a
+  breakthrough: at 3--4$\times$ the known ceiling, the probability that
+  you out-modeled the world's best team by that margin is far below the
+  probability of a centered rolling window
+  (Chapter~\ref{ch:leakage}). Our standing rule: celebrate \emph{after}
+  the leak hunt fails.
+\item \textbf{Train--validation gaps are structural.} Train $R^2$ of
+  0.02--0.03 against validation 0.008 is the equilibrium of a correctly
+  regularized model at this SNR --- memorization pressure is constant and
+  nonzero. The gap is monitored for \emph{growth}, not for existence.
+\end{itemize}
+
+\section{The curves worth logging}
+
+Beyond the loss, five series earn their disk space in every run:
+
+\begin{enumerate}
+\item \textbf{Validation weighted-$R^2$ per epoch} --- the decision
+  variable for early stopping (patience $\sim$10: the curve is noisy
+  enough that patience 2--3 stops on fluctuations; we measured
+  best-epoch spreads of 5+ epochs across seeds of identical configs).
+\item \textbf{Per-day validation score} at the end --- a distribution, not
+  a number. A model that wins by $+0.02$ on three days and loses
+  everywhere else is fragile in a way the mean hides; a model whose
+  worst days cluster at regime events tells you what feature is missing.
+\item \textbf{Prediction statistics}: mean (bias burns score
+  quadratically --- Chapter~\ref{ch:metric}), standard deviation
+  (collapse toward zero-variance predictions is the classic
+  under-trained/over-regularized signature; explosion signals a broken
+  scaler), and max $|\hat y|$ (one 50-sigma prediction on a high-weight
+  row can erase a day).
+\item \textbf{Gradient norms} pre-clipping --- heavy-tailed days announce
+  themselves here first; a rising trend mid-training precedes most
+  divergences we saw.
+\item \textbf{The static/online pair} for any adaptive model
+  (Chapter~\ref{ch:online}) --- the gap between them is a diagnostic
+  in its own right, and its collapse is how you notice a refit-lr
+  regression before it costs a week.
+\end{enumerate}
+
+\section{The debugging ladder}
+
+When a model underperforms expectations, resist touching hyperparameters
+--- at this SNR you cannot distinguish a bad lr from a broken pipeline by
+staring at scores. Climb in order; each rung is cheap and conclusive:
+
+\subsection{Rung 1: anchor the floor}
+
+Score the trivial ensemble: all-zeros (must be exactly $0.000$ --- if not,
+your metric implementation is wrong, and yes, we have seen that), plus a
+10-feature ridge probe (should land $+0.002$ to $+0.004$ here). Your model
+must live above both. A deep model \emph{below the linear probe} has a
+wiring problem, not a capacity problem.
+
+\subsection{Rung 2: overfit on purpose}
+
+Train on 3 days, validate on the same 3 days. Any healthy architecture
+must push train $R^2$ far above the signal level ($0.2+$) by memorizing.
+Failure localizes the bug precisely: data loader shapes, mask direction,
+loss reduction, weight plumbing --- something mechanical. This test found
+a transposed (symbol, time) batch for us in minutes; no amount of
+production-scale training would have.
+
+\subsection{Rung 3: causality and structure probes}
+
+The shift and shuffle tests of Chapter~\ref{ch:leakage}, run as
+\emph{model} diagnostics: score collapse under a one-step feature shift
+$\Rightarrow$ leakage; score \emph{survival} under within-day shuffling
+$\Rightarrow$ your sequence model is not using sequence (which, for an
+RNN scoring near the MLP baseline, is confirmation of rung-2-class bugs
+or of features that already contain all the time structure).
+
+\subsection{Rung 4: seed replication}
+
+Three seeds minimum before comparing anything to anything
+(Chapter~\ref{ch:problem}). Our measured seed spread ($\pm 0.0003$ to
+$0.0008$) is the unit of measurement; an effect inside one unit does not
+exist yet.
+
+\subsection{Rung 5: now, and only now, hyperparameters}
+
+And even then, sweep the parameters with cliffs first (refit lr ---
+Chapter~\ref{ch:online}; training lr; clipping threshold) before the
+parameters with plateaus (width, depth, dropout) --- our capacity sweeps
+were flat, our procedure sweeps were not.
+
+\section{Comparing runs honestly}
+
+The bookkeeping that turns runs into knowledge
+(Chapter~\ref{ch:validation} covers the validation side):
+
+\begin{itemize}
+\item \textbf{One variable per comparison.} The temptation to bundle
+  (``new features \emph{and} more width, it won!'') destroys attribution
+  exactly where effects are small enough that attribution is the whole
+  point.
+\item \textbf{Fixed harness, forever.} Same dates, same embargo, same
+  metric code, same seeds across every experiment in a campaign. All of
+  this book's tables are mutually comparable because the harness never
+  moved.
+\item \textbf{Append-only results log} with config hashes. Selection bias
+  feeds on forgotten losers (Chapter~\ref{ch:leakage}); the log is the
+  immune system. Ours is a directory of JSON artifacts plus two markdown
+  ledgers --- nothing fancier than that is needed.
+\end{itemize}
+
+\begin{jsbox}[: a real debugging transcript, compressed]
+Symptom: sig-transformer online score $0.0044$, well below its static
+$0.0059$ --- ``online refit breaks signatures.''
+Rung 1--2: pass (wiring fine). Rung 3: pass (no leak; sequence used).
+Rung 4: reproduces across seeds --- so it is real, but real
+\emph{what}? Rung 5, cliff parameters first: refit-lr sweep $\to$ at
+$3\times10^{-5}$ the regression becomes a gain ($+0.0062$).
+Conclusion rewritten: not an architecture defect --- a borrowed
+hyperparameter (Chapter~\ref{ch:online}). Total ladder time: one
+afternoon. Time spent on the wrong conclusion before running the ladder:
+two weeks of intermittent confusion.
+\end{jsbox}
+
+\begin{drillbox}
+Instrument your current training script with the five curves of this
+chapter, then deliberately break it four ways --- transpose two batch
+dimensions, unweight the loss, center a rolling window, set refit lr
+10$\times$ high --- and re-run. Learn each failure's curve signature
+while the stakes are zero; at $R^2=0.01$, recognizing them from curves is
+a survival skill, because the \emph{scores} of broken and healthy runs
+overlap.
+\end{drillbox}

@@ -1,0 +1,108 @@
+\chapter{The Condensed Checklist}
+\label{app:checklist}
+
+The whole book as an operational sequence. Each item cites its chapter.
+
+\section*{Before modeling}
+\begin{enumerate}[label=\arabic*., itemsep=1pt]
+\item Locate the metric's zero point and the realistic ceiling; write both
+  at the top of your notes. (Ch.~\ref{ch:problem}, \ref{ch:metric})
+\item Read the metric's formula character by character; reimplement it
+  yourself; push weights into every loss and every early-stopping
+  criterion. (Ch.~\ref{ch:metric})
+\item Fingerprint every target: ACF shape (ramps? cutoffs?), spectrum
+  (nulls? floors?), shift scan ($R^2$ vs.\ relative lag).
+  (Ch.~\ref{ch:targets})
+\item Fingerprint every feature the same way; build the lead--lag atlas
+  against the (deconvolved) reference signal; split lead from nowcast.
+  (Ch.~\ref{ch:featforensics})
+\item Pass every structural finding through the two-window stability gate
+  before it becomes load-bearing. (Ch.~\ref{ch:featforensics},
+  \ref{ch:negative})
+\item Write the deployment information set as one formal sentence; derive
+  the forensic report and the dead-ends list. (Ch.~\ref{ch:leakage},
+  \ref{ch:targets})
+\end{enumerate}
+
+\section*{Data discipline}
+\begin{enumerate}[label=\arabic*., itemsep=1pt, resume]
+\item Type every feature: trailing / contemporaneous / forward; forward
+  types are targets only. Lags via date-shifted joins.
+  (Ch.~\ref{ch:leakage})
+\item Fit all preprocessing on training dates only; freeze at the
+  boundary; online updates from predicted-past days only.
+  (Ch.~\ref{ch:preprocessing})
+\item Embargo $\ge$ the pipeline's longest forward reach --- labels
+  included. (Ch.~\ref{ch:leakage})
+\item Walk-forward validation that includes the adaptation procedure;
+  static and online scores reported separately.
+  (Ch.~\ref{ch:validation})
+\item Establish CV--LB correlation with a handful of spread-out probe
+  submissions before trusting either. (Ch.~\ref{ch:validation})
+\item Measure your seed noise; effects inside one seed-noise unit do not
+  exist yet. Two-tier validation; pre-registered experiments;
+  append-only log. (Ch.~\ref{ch:problem}, \ref{ch:diagnostics})
+\item Precompute features once; float16 storage / float32 compute;
+  memmap with a date-range manifest; rows ordered by access pattern.
+  (Ch.~\ref{ch:preprocessing})
+\end{enumerate}
+
+\section*{Features}
+\begin{enumerate}[label=\arabic*., itemsep=1pt, resume]
+\item Decompose, don't destroy: level + innovation; market +
+  idiosyncratic; keep both parts. (Ch.~\ref{ch:smoothing},
+  \ref{ch:preprocessing})
+\item Never smooth a timing signal; difference or deconvolve
+  pre-smoothed series at their detected window.
+  (Ch.~\ref{ch:smoothing})
+\item Build the cross-sectional block (market averages, ranks) --- the
+  no-latency direction. (Ch.~\ref{ch:featurepatterns})
+\item Convert construction knowledge into algebra: multi-scale
+  differences, venue spreads, realized/nowcast auxiliary targets.
+  (Ch.~\ref{ch:featurepatterns})
+\item Selection: fold-consistent importance $\cup$ forensic seeds;
+  symbolic search with parent-beating and redundancy caps; prune raw
+  dumps, never curated pools; schedule recycling.
+  (Ch.~\ref{ch:selection})
+\item Ablate every block on the model family that will consume it, on
+  the fixed harness. (Ch.~\ref{ch:featurepatterns})
+\end{enumerate}
+
+\section*{Models}
+\begin{enumerate}[label=\arabic*., itemsep=1pt, resume]
+\item XGBoost first --- baseline, meter, and permanent ensemble member.
+  (Ch.~\ref{ch:treesmlp})
+\item Track the XGB--MLP gap as your feature-quality dashboard.
+  (Ch.~\ref{ch:treesmlp})
+\item A recurrent model with auxiliary heads is the presumptive
+  workhorse wherever labels arrive with delay; day = batch;
+  clip gradients. (Ch.~\ref{ch:rnn})
+\item Attention only as a targeted bet on forensically evidenced
+  structure, made causal for the protocol, and triaged on a synthetic
+  world first. (Ch.~\ref{ch:attention}, \ref{ch:synthetic})
+\item Judge every candidate family by the two taxes: adaptation
+  (its own refit-lr sweep) and correlation (the admission rule).
+  (Ch.~\ref{ch:online}, \ref{ch:ensembling})
+\end{enumerate}
+
+\section*{Training and operations}
+\begin{enumerate}[label=\arabic*., itemsep=1pt, resume]
+\item Recalibrate your eyes: loss moves in the third decimal; epoch~1 is
+  negative; $+0.008$ is good; $+0.05$ is a leak.
+  (Ch.~\ref{ch:diagnostics})
+\item Debug up the ladder --- floor anchors, deliberate overfit,
+  shift/shuffle probes, seed replication --- before touching
+  hyperparameters. (Ch.~\ref{ch:diagnostics})
+\item Online refit on by default; sweep its learning rate per family;
+  expect plateaus a decade wide and cliffs on both sides.
+  (Ch.~\ref{ch:online})
+\item Sweep the recency window; expect a knee; do not train on ancient
+  regimes. (Ch.~\ref{ch:online}, \ref{ch:negative})
+\item Ensemble: simple average of best-per-family; diversity from
+  families, seeds, temporal bags, adaptation variants; climb the
+  weighting ladder only while untouched data pays.
+  (Ch.~\ref{ch:ensembling})
+\item Bury every dead idea in the graveyard file with its autopsy;
+  identify which of the four pathogens got it.
+  (Ch.~\ref{ch:negative})
+\end{enumerate}

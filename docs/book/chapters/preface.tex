@@ -1,0 +1,81 @@
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+
+This book exists because of a peculiar experience: spending months trying to
+predict something that is, by construction, almost entirely unpredictable ---
+and discovering that \emph{almost} is where all the craft lives.
+
+The Jane Street \emph{Real-Time Market Data Forecasting} competition asked
+entrants to predict an anonymized financial quantity, \resp{6}, from 79
+anonymized features, for roughly forty symbols, at 968 moments of every
+trading day, under a streaming protocol that feeds you one timestamp at a
+time. The winner's score --- the best score achieved by anyone on Earth, on
+years of data, with unlimited compute --- explained \textbf{1.39\%} of the
+target's variance. Our own campaign, which this book documents, reached about
+1.04\% on a local validation protocol replicating the 8th-place solution, and
+produced along the way a body of measurements, derivations, failures, and
+tools that generalize to any competition of this shape: DRW's crypto
+prediction challenge, Optiver's volatility and order-book contests,
+Ubiquant's market forecasting, the M-series forecasting competitions, and the
+many private analogues run inside trading firms.
+
+That last clause is the point. \emph{Tabular time-series prediction at very
+low signal-to-noise is a genre.} It has its own physics (noise ceilings, drift,
+cross-sectional structure), its own failure modes (leakage, unstable
+validation, overfit ensembles), its own architecture debates (trees versus
+recurrence versus attention), and its own craft knowledge that rarely gets
+written down because the people who possess it are either bound by NDAs or
+too busy competing. Kaggle write-ups are the genre's samizdat: terse,
+brilliant, and cryptic exactly where a beginner needs detail. This book tries
+to be the missing long-form treatment --- the document we wish we had found
+before starting.
+
+\section*{How this book teaches}
+
+Three commitments shape every chapter:
+
+\begin{enumerate}
+\item \textbf{Every principle is paid for with a measurement.} When we claim
+  that online refitting matters more than architecture choice, we show the
+  ledger: $+0.003$ to $+0.005$ weighted $R^2$ from a daily gradient step,
+  versus $\pm 0.0005$ from doubling network width. When we claim optimized
+  ensemble weights overfit, we show the optimizer collapsing into corner
+  solutions and losing to a plain average. The numbers come from a real
+  campaign; the artifact paths in the repository are cited so you can check.
+\item \textbf{Negative results get equal billing.} A third of what we know is
+  what \emph{didn't} work: training on more history made models worse;
+  symbol-identity features were useless; a theoretically beautiful
+  path-signature model added nothing an LSTM hadn't already captured.
+  Chapter~\ref{ch:negative} collects these; they are as transferable as the
+  positive results, and more expensive to rediscover.
+\item \textbf{Forensics before modeling.} The single highest-leverage act in
+  our campaign was not a model. It was a community member's discovery ---
+  reproduced and extended here --- that the target is a moving average of
+  near-white noise, shifted forward in time. Everything sensible we did
+  afterward flowed from that one piece of reverse engineering. Part~II
+  teaches the forensic toolkit as a first-class discipline: autocorrelation
+  fingerprints, Fourier signatures, lead--lag maps, deconvolution.
+\end{enumerate}
+
+\section*{What you need to bring}
+
+Comfort with probability at the level of ``variance of a sum of independent
+variables,'' some exposure to gradient-boosted trees and neural networks, and
+working Python. The mathematics is kept honest but grounded: when we derive
+the autocorrelation of a moving average or the ridge inverse of a smoothing
+operator, it is because the formula is about to earn money in a feature
+pipeline, not for its own sake.
+
+\section*{A note on humility}
+
+Everything here was measured on one competition, ported from two others, and
+cross-checked where possible. Markets change; protocols differ; the next
+contest will break at least one rule in this book. What should transfer is
+the \emph{method}: estimate the ceiling, reverse-engineer the process, guard
+the information boundary, measure everything twice, and prefer boring
+variance reduction over glamorous capacity. Where you find the book wrong,
+it will most likely be wrong in a way that the book's own methodology would
+have caught. Use the methodology, not the conclusions.
+
+\vspace{2em}
+\noindent\textit{Berkeley, July 2026}

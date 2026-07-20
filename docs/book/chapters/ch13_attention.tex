@@ -1,0 +1,204 @@
+\chapter{The Model Zoo III: The Attention Family}
+\label{ch:attention}
+
+Transformers dominate every domain they have entered --- except, so far,
+low-SNR tabular time series, where the public record (this competition,
+DRW, the M-competitions' tabular tiers) is dominated by trees and
+recurrence. This chapter takes attention seriously anyway: the vanilla
+causal transformer as a baseline, then the two modern designs whose
+inductive biases genuinely match this problem's structure ---
+\textbf{iTransformer} (attention across \emph{variates}) and
+\textbf{TimeXer} (endogenous/exogenous split) --- including the surgery
+each needs to survive a streaming protocol, and the honest state of the
+evidence.
+
+\section{The causal transformer baseline}
+
+Same tensor convention as Chapter~\ref{ch:rnn} --- (symbols, $T{=}968$,
+features) per day --- with self-attention over the time axis under a
+triangular (causal) mask:
+\[
+\mathrm{Attn}(Q, K, V)_t = \sum_{t' \le t}
+\mathrm{softmax}\!\Big(\tfrac{q_t \cdot k_{t'}}{\sqrt{d}}\Big)\, v_{t'} .
+\]
+Where the RNN compresses history into a fixed state, attention retrieves
+from every past step directly --- strictly more expressive, quadratically
+more expensive, and hungrier for data.
+
+Measured here (260k parameters, matched harness): $+0.0047$ static,
+$+0.0050$ online. Two readings:
+
+\begin{itemize}
+\item Statically competitive with same-era RNNs --- the architecture works.
+\item \textbf{Online refit barely moves it} ($+0.0003$, against
+  $+0.003$--$0.005$ for RNNs). Since online adaptation is this genre's
+  biggest lever (Chapter~\ref{ch:online}), an architecture that cannot use
+  it starts the race a lap behind. This single row explains most of why
+  attention has not yet won this genre.
+\end{itemize}
+
+\section{iTransformer: invert the token axis}
+
+\subsection{The idea}
+
+The iTransformer observation (Liu et al., 2023): for multivariate
+forecasting, the interesting correlations are often \emph{across
+variables}, not across time. So invert the embedding: make each
+\textbf{variate} a token (embedding its recent series), and let attention
+model which features talk to which. Time, now inside each token, is
+handled by feed-forward layers.
+
+The bias matches structure this dataset provably has: the atlas's
+market-wide factors, the reversal block's shared dynamics, and the
+symbolic search's discovery that the strongest engineered features were
+\emph{cross-feature gates} --- $\min(\text{market factor},
+\text{reversal feature})$ --- are all statements about variate--variate
+relationships (Chapters~\ref{ch:featforensics}, \ref{ch:selection}).
+
+\subsection{The surgery: causality}
+
+Published iTransformer embeds each variate's \emph{whole window} into its
+token --- at prediction time $t$ the token contains the future.
+Illegal here (Chapter~\ref{ch:leakage}'s protocol half). Our adaptation
+(\code{itransformer.py}) restructures it:
+
+\begin{enumerate}
+\item \textbf{Per-timestep variate tokens}: at each $t$, a selected subset
+  of features (the atlas alpha set --- selection matters, attention over
+  all 134 columns is waste) becomes $V$ tokens via per-variate affine
+  embeddings.
+\item \textbf{Inverted attention} over those $V$ tokens \emph{within}
+  timestep $t$ --- cross-feature reasoning with zero temporal reach:
+  causal by construction.
+\item \textbf{A learned global query} cross-attends the variate tokens
+  into one summary vector per timestep (a TimeXer-style bridge).
+\item \textbf{A causal temporal transformer} over the summaries mixes time
+  --- the only place time is mixed, and it is masked.
+\end{enumerate}
+
+The design splits the two questions --- ``which features interact?''
+(inverted attention, per step) and ``how does context evolve?'' (causal
+attention, across steps) --- and answers each with the right mechanism.
+
+\section{TimeXer: the endogenous/exogenous split}
+
+\subsection{The idea}
+
+TimeXer (Wang et al., 2024) formalizes a distinction this protocol makes
+physically real: the \textbf{endogenous} series (the target's own history)
+and \textbf{exogenous} covariates deserve different treatment. Endogenous
+history is patchified into tokens with a learnable global token;
+exogenous variates get inverted (iTransformer-style) tokens;
+cross-attention bridges the two.
+
+Map it onto the competition's information set
+(Chapter~\ref{ch:problem}) and the fit is uncanny:
+
+\begin{itemize}
+\item \textbf{Endogenous = yesterday's full responder path} --- the lag
+  file. Fully known at day start; may be attended \emph{non-causally}
+  (it is all past); naturally patchified (968 steps $\to$ 22 patches of
+  44).
+\item \textbf{Exogenous = today's streaming features} --- must remain
+  causal within the day.
+\end{itemize}
+
+\subsection{The surgery: invert the bridge}
+
+Published TimeXer points the cross-attention from the endogenous global
+token \emph{into} the exogenous variate tokens --- whose whole-window
+embeddings are again future-containing. Our adaptation
+(\code{timexer.py}) reverses the arrow: \textbf{the causal today-stream
+is the query; yesterday's fully-known endogenous tokens are keys and
+values.} Today, at each step, \emph{reads from} yesterday --- never the
+reverse. No mask is even needed on the bridge: every endogenous token is
+prior-day data, available at every $t$.
+
+\begin{center}
+\begin{tikzpicture}[
+  box/.style={draw=inkblue, fill=paleblue, rounded corners=2pt,
+              minimum height=8mm, minimum width=30mm, font=\small},
+  arr/.style={-{Latex[length=2.5mm]}, thick, color=inkblue}]
+\node[box] (endo) at (0,0) {yesterday's responder path};
+\node[box, below=4mm of endo] (patch) {patches + global token};
+\node[box, below=4mm of patch, xshift=8mm] (selfa) {non-causal self-attn};
+\node[box] (exo) at (9.6,0) {today's features (stream)};
+\node[box, below=4mm of exo] (caus) {causal temporal encoder};
+\node[box, below=10mm of selfa, xshift=24mm] (bridge)
+  {cross-attn: today queries yesterday};
+\node[box, below=4mm of bridge] (head) {per-step head $\to \hat y_t$};
+\draw[arr] (endo) -- (patch);
+\draw[arr] (patch) -- (selfa);
+\draw[arr] (exo) -- (caus);
+\draw[arr] (selfa.south) to[out=-60,in=170] node[pos=0.35, below left,
+  font=\scriptsize, color=inkgray] {K, V} (bridge.west);
+\draw[arr] (caus.south) to[out=-90,in=30] node[pos=0.3, right,
+  font=\scriptsize, color=inkgray] {Q} (bridge.north east);
+\draw[arr] (bridge) -- (head);
+\end{tikzpicture}
+\end{center}
+
+The general design lesson outlives this architecture: \textbf{when a paper
+assumes batch access to a window and your protocol streams, do not discard
+the idea --- find which stream is fully known and re-aim the attention so
+information flows from the known into the causal.}
+
+\section{The honest state of the evidence}
+
+Where things stood at the time of writing, stated plainly because this
+book's credibility rests on such statements:
+
+\begin{itemize}
+\item Vanilla causal transformer: built, measured, \textbf{kept as
+  baseline only} --- statically fine, refit-inert, ensemble weight zero
+  (too correlated with the RNNs; Chapter~\ref{ch:ensembling}).
+\item Causal iTransformer and TimeXer: \textbf{built, causality-audited,
+  not yet conclusively benchmarked} --- their fair evaluation needs GPU
+  budgets our laptop phase did not have, and one interrupted CPU run
+  proves nothing either way.
+\item To decide whether they \emph{deserve} the GPU budget, we built the
+  synthetic triage world of Chapter~\ref{ch:synthetic}: planted mechanisms
+  matched to each bias (a yesterday-path $\times$ time-of-day effect for
+  TimeXer; persistent cross-variate min-gates for iTransformer) at the
+  real problem's SNR, with reference-predictor ceilings. The decision
+  rule, fixed before results: \emph{an architecture that cannot beat the
+  GRU on a world designed for its own inductive bias does not get real
+  compute.}
+\end{itemize}
+
+\section{When attention should win (and when it shouldn't)}
+
+Collecting the chapter into a decision surface:
+
+\begin{itemize}
+\item \textbf{Attention over time} pays when long-range, content-dependent
+  retrieval matters (``find the last time the day looked like this
+  morning''). At $R^2 = 0.01$, with 968-step days whose early context an
+  RNN summarizes adequately, we found no measurable retrieval premium ---
+  and a real adaptation penalty.
+\item \textbf{Attention over variates} pays when cross-feature structure
+  is rich and state-dependent --- which forensics says is true here. It
+  is the more promising direction of the two, and the cheaper one (tokens
+  = a dozen selected variates, not 968 steps).
+\item \textbf{The endo/exo split} pays when the protocol makes the
+  target's history a \emph{differently-shaped} input than the covariates
+  --- as daily lag delivery does. It is a protocol-shaped bias, which is
+  the best kind.
+\item All of it must survive the two genre taxes: the \textbf{adaptation
+  tax} (does daily refit help it? at what learning rate ---
+  Chapter~\ref{ch:online}'s cliffs are family-specific) and the
+  \textbf{correlation tax} (does its stream decorrelate from the RNNs
+  enough to earn ensemble weight? --- Chapter~\ref{ch:ensembling}).
+  The vanilla transformer failed both. The two structured variants get
+  their verdict from the synthetic world first.
+\end{itemize}
+
+\begin{drillbox}
+Take any published forecasting architecture and perform the streaming
+audit we performed on TimeXer: list every tensor it builds; mark which
+would contain future values under a one-step-at-a-time protocol; redesign
+the minimal set of attention directions so all flows go from
+fully-known to causal. If no such redesign exists, the architecture is
+batch-only --- knowing that before implementation is the cheapest
+experiment you will ever run.
+\end{drillbox}

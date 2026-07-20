@@ -85,6 +85,8 @@ class FeatureBuilder:
           - optional extras
         """
         df = self._add_synthetic_responders(df)
+        if self.cfg.realized_aux:
+            df = self._add_realized_responders(df)
         df = self._add_rolling_per_symbol(df)
         df = self._add_market_avg(df)
         df = df.with_columns(pl.col(COL_TIME).cast(pl.Float32).alias("feature_time_id"))
@@ -111,6 +113,25 @@ class FeatureBuilder:
                 + pl.col("responder_6").shift(-20).over(COL_ID)
                 + pl.col("responder_6").shift(-40).over(COL_ID)
             ).fill_null(0.0).alias("responder_10"),
+        )
+
+    @staticmethod
+    def _add_realized_responders(df: pl.DataFrame) -> pl.DataFrame:
+        """Backward-realized responders as aux TARGETS (nowcast heads).
+
+        The dataset's responder_r at row t is the forward SMA over ~(t..t+w)
+        (#555562). Its value at row t-w is therefore the SMA that *completed*
+        at t — a realized quantity the features describe with high R². These
+        are training targets only (never model inputs), so like the forward
+        synthetic responders they may be null-filled at day edges; the same
+        1-date embargo logic applies (backward shifts reach into the previous
+        date's tail, which is training-side, not validation-side).
+        """
+        return df.with_columns(
+            pl.col("responder_6").shift(20).over(COL_ID)
+            .fill_null(0.0).alias("responder_11"),
+            pl.col("responder_8").shift(4).over(COL_ID)
+            .fill_null(0.0).alias("responder_12"),
         )
 
     def _add_rolling_per_symbol(self, df: pl.DataFrame) -> pl.DataFrame:

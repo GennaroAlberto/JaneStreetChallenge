@@ -44,6 +44,7 @@ class ModelRBase(nn.Module):
         hidden_sizes_linear: list[int],
         dropout_rates_linear: list[float],
         model_type: str = "gru",
+        xsec_heads: int = 0,
     ) -> None:
         super().__init__()
         self.num_layers = len(hidden_sizes)
@@ -57,6 +58,18 @@ class ModelRBase(nn.Module):
             self.rnns.append(cls(in_dim, hidden_sizes[i], num_layers=1, batch_first=True))
             self.dropouts.append(nn.Dropout(dropout_rates[i]))
         n_in = hidden_sizes[-1] if hidden_sizes else input_size
+
+        # Cross-sectional attention: at each timestep, symbols attend to the
+        # other symbols' hidden states. The RNN stack treats symbols as
+        # independent batch elements — cross-sectional structure otherwise
+        # enters only through the crude market-average features. Mixing is
+        # strictly within a timestep (all symbols' rows for a time_id arrive
+        # together at inference), so this is contemporaneous and deployable.
+        self.xsec = None
+        self.xsec_norm = None
+        if xsec_heads > 0:
+            self.xsec = nn.MultiheadAttention(n_in, xsec_heads, batch_first=True)
+            self.xsec_norm = nn.LayerNorm(n_in)
 
         layers: list[nn.Module] = []
         if hidden_sizes_linear:
@@ -79,6 +92,12 @@ class ModelRBase(nn.Module):
             x, h = rnn(x, hidden[i])
             x = self.dropouts[i](x)
             hidden[i] = h
+        # getattr: checkpoints pickled before xsec existed lack the attribute
+        xsec = getattr(self, "xsec", None)
+        if xsec is not None:
+            ht = self.xsec_norm(x).transpose(0, 1)      # (T, D, H): tokens=symbols
+            a, _ = xsec(ht, ht, ht, need_weights=False)
+            x = x + a.transpose(0, 1)
         x = self.fc(x.reshape(d * t, -1)).reshape(d, t)
         return x, hidden
 
@@ -140,7 +159,17 @@ class RecurrentModel(BaseModel):
         n_times: int = 968,
         seed: int = 42,
         device: str = "auto",
+        xsec_heads: int = 0,
+        lr_groups: list[tuple[str, float]] | None = None,
+        refit_lr_groups: list[tuple[str, float]] | None = None,
     ) -> None:
+        # (substring, lr) pairs: parameters whose name contains the substring
+        # train at that lr instead of the base lr (fit / refit respectively).
+        # Lets an attached module (e.g. the xsec attention) learn at its own
+        # rate on a warm-started backbone, or freeze during refits (lr 0).
+        self.lr_groups = lr_groups
+        self.refit_lr_groups = refit_lr_groups
+        self.xsec_heads = xsec_heads
         self.model_type = model_type
         self.aux_branches = aux_branches
         self.num_aux = num_aux
@@ -171,6 +200,26 @@ class RecurrentModel(BaseModel):
         self.optimizer: torch.optim.Optimizer | None = None
         self.best_epoch: int | None = None
 
+    @staticmethod
+    def _grouped_params(model: nn.Module, base_lr: float,
+                        spec: list[tuple[str, float]] | None):
+        """AdamW param groups from (name-substring, lr) pairs; unmatched
+        params fall through to ``base_lr``. Returns None when no spec."""
+        if not spec:
+            return None
+        used: set[int] = set()
+        groups = []
+        for sub, glr in spec:
+            ps = [p for n, p in model.named_parameters()
+                  if sub in n and id(p) not in used]
+            used.update(id(p) for p in ps)
+            if ps:
+                groups.append({"params": ps, "lr": glr})
+        rest = [p for _, p in model.named_parameters() if id(p) not in used]
+        if rest:
+            groups.append({"params": rest, "lr": base_lr})
+        return groups
+
     # ------------------------------------------------------------------
     def _build(self, input_size: int) -> nn.Module:
         if self.aux_branches:
@@ -182,6 +231,7 @@ class RecurrentModel(BaseModel):
                 hidden_sizes_linear=self.hidden_sizes_linear,
                 dropout_rates_linear=self.dropout_rates_linear,
                 model_type=self.model_type,
+                xsec_heads=self.xsec_heads,
             )
         return ModelRBase(
             input_size,
@@ -190,6 +240,7 @@ class RecurrentModel(BaseModel):
             hidden_sizes_linear=self.hidden_sizes_linear,
             dropout_rates_linear=self.dropout_rates_linear,
             model_type=self.model_type,
+            xsec_heads=self.xsec_heads,
         )
 
     # ------------------------------------------------------------------
@@ -253,8 +304,11 @@ class RecurrentModel(BaseModel):
             self.model = self.model.to(self.device)
         else:
             self.model = self._build(train.X.shape[1]).to(self.device)
+        fit_groups = self._grouped_params(self.model, self.lr,
+                                          getattr(self, "lr_groups", None))
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
+            fit_groups if fit_groups is not None else self.model.parameters(),
+            lr=self.lr, weight_decay=self.weight_decay
         )
 
         best_r2 = -np.inf
@@ -299,6 +353,12 @@ class RecurrentModel(BaseModel):
                     f"{(v_loss if v_loss is not None else float('nan')):>9.4f} | "
                     f"{tr_r2:>8.4f} | {(v_r2 if v_r2 is not None else float('nan')):>7.4f}"
                 )
+
+            # optional external observer (e.g. tslab TrainingWatcher) —
+            # plain attribute lookup so pickled checkpoints stay compatible
+            cb = getattr(self, "epoch_callback", None)
+            if cb is not None:
+                cb(self.model, epoch, v_r2)
 
             v_metric = v_r2 if v_r2 is not None else tr_r2
             if v_metric > best_r2:
@@ -397,7 +457,10 @@ class RecurrentModel(BaseModel):
                 losses.append(self.criterion(pred.flatten(), y.flatten(), w.flatten()).item())
                 ys.append(y.flatten().cpu()); ws.append(w.flatten().cpu()); ps.append(pred.flatten().cpu())
             if self.lr_refit > 0:
-                opt = torch.optim.AdamW(model.parameters(), lr=self.lr_refit, weight_decay=self.weight_decay)
+                rg = self._grouped_params(model, self.lr_refit,
+                                          getattr(self, "refit_lr_groups", None))
+                opt = torch.optim.AdamW(rg if rg is not None else model.parameters(),
+                                        lr=self.lr_refit, weight_decay=self.weight_decay)
                 opt.zero_grad()
                 model.train()
                 pred, _, _ = self._forward_for_model(model, x, None)
@@ -441,7 +504,10 @@ class RecurrentModel(BaseModel):
         X_t = reshape_flat_to_sequence(X_t, n_times).to(self.device)
         y_t = y_t.view(n_times, -1).swapaxes(0, 1).to(self.device)
         w_t = w_t.view(n_times, -1).swapaxes(0, 1).to(self.device)
-        opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr_refit, weight_decay=self.weight_decay)
+        rg = self._grouped_params(self.model, self.lr_refit,
+                                  getattr(self, "refit_lr_groups", None))
+        opt = torch.optim.AdamW(rg if rg is not None else self.model.parameters(),
+                                lr=self.lr_refit, weight_decay=self.weight_decay)
         self.model.train()
         opt.zero_grad()
         y_pred, _, _ = self._forward(X_t, None)

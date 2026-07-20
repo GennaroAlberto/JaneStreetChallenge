@@ -40,9 +40,14 @@ import contextlib
 import copy
 import json
 import pickle
+import sys
 import time
 from datetime import datetime
+import os
 from pathlib import Path
+
+TSLAB_SRC = Path(os.environ.get(
+    "TSLAB_SRC", Path.home() / "Desktop" / "code" / "tslab" / "src"))
 
 import numpy as np
 import polars as pl
@@ -77,8 +82,38 @@ MODEL_KWARGS: dict[str, dict] = {
     "gru_modelr": dict(
         hidden_sizes=[96, 96, 96], dropout_rates=[0.1, 0.1, 0.1],
         hidden_sizes_linear=[], dropout_rates_linear=[],
+        # rewalk 2026-07-18: plain GRU also prefers 3e-4 refits
+        # (+0.00811 → +0.00845 online); LSTM keeps 1e-3 (unswept — rewalk
+        # cheap via scripts/rewalk_checkpoint.py before changing it)
         lr=1e-3, weight_decay=1e-2, epochs=15, batch_size=1, grad_clip=1.0,
-        early_stopping_patience=4, lr_refit=1e-3, device="cpu", num_aux=4,
+        early_stopping_patience=4, lr_refit=3e-4, device="cpu", num_aux=4,
+    ),
+    # ModelR + cross-sectional symbol attention (EDA: weak symbols should
+    # borrow strength; the RNNs otherwise never mix symbols).
+    # refit-lr swept 2026-07-18: attention params are brittle under 1e-3
+    # daily steps (online +0.00679 → +0.00870 at 3e-4; 3e-3 catastrophic).
+    # The plain-RNN cliff does NOT transfer across the attention boundary.
+    "gru_modelr_xsec": dict(
+        hidden_sizes=[96, 96, 96], dropout_rates=[0.1, 0.1, 0.1],
+        hidden_sizes_linear=[], dropout_rates_linear=[],
+        lr=1e-3, weight_decay=1e-2, epochs=15, batch_size=1, grad_clip=1.0,
+        early_stopping_patience=4, lr_refit=3e-4, device="cpu", num_aux=4,
+        xsec_heads=4,
+    ),
+    "lstm_modelr_xsec": dict(
+        hidden_sizes=[96, 96, 96], dropout_rates=[0.1, 0.1, 0.1],
+        hidden_sizes_linear=[], dropout_rates_linear=[],
+        lr=1e-3, weight_decay=1e-2, epochs=15, batch_size=1, grad_clip=1.0,
+        early_stopping_patience=4, lr_refit=3e-4, device="cpu", num_aux=4,
+        xsec_heads=4,
+    ),
+    # Supervised denoising AE + MLP (2021 JS winner family; row-wise).
+    "ae_mlp": dict(
+        latent=16, enc_hidden=128, mlp_hidden=[256, 256, 128],
+        dropout=0.2, noise_std=0.1, num_aux=4, aux_weight=1.0,
+        recon_weight=0.5, lr=1e-3, weight_decay=1e-2, epochs=20,
+        batch_size=8192, early_stopping_patience=3, lr_refit=1e-4,
+        device="cpu",
     ),
     # ---- small-intensity models (fast; good for validating the bag loop
     #      and cheap ensemble members) ----
@@ -141,6 +176,7 @@ def load_manifest(data_dir: Path) -> dict:
 def _build_fitdata_parquet(
     data_dir: Path, manifest: dict, date_list: np.ndarray,
     group_override: np.ndarray | None,
+    aux_cols: list[str] | None = None,
 ) -> FitData:
     """Parquet-backed twin of ``build_fitdata_for_dates`` (see its docstring).
 
@@ -150,43 +186,62 @@ def _build_fitdata_parquet(
     bootstrap that repeats a date reads it from disk once.
     """
     feature_cols = manifest["feature_cols"]
-    aux_cols = manifest["aux_cols"]
+    aux_cols = aux_cols if aux_cols is not None else manifest["aux_cols"]
     target = manifest["target"]
-    cache: dict[int, pl.DataFrame] = {}
+    K, A = len(feature_cols), len(aux_cols)
 
-    def part(d: int) -> pl.DataFrame | None:
-        if d not in cache:
-            f = data_dir / "data" / f"date_id={d}" / "part.parquet"
-            cache[d] = pl.read_parquet(f) if f.exists() else None
-        return cache[d]
+    # Preallocate from the manifest's row counts and fill in place. The old
+    # implementation cached every partition's DataFrame and concatenated
+    # per-date numpy parts at the end — peak ~3x the final size, which OOMs
+    # a free-tier Colab (12.7 GB) on a 280-date window. This path peaks at
+    # final size + one date's frame.
+    ranges = manifest["date_row_ranges"]
 
-    X_parts, resp_parts, y_parts, w_parts = [], [], [], []
-    sym_parts, date_parts, time_parts = [], [], []
+    def path_for(d: int) -> Path:
+        return data_dir / "data" / f"date_id={int(d)}" / "part.parquet"
+
+    counts = [
+        (ranges[str(int(d))][1] - ranges[str(int(d))][0])
+        if str(int(d)) in ranges and path_for(d).exists() else 0
+        for d in date_list
+    ]
+    n_total = int(sum(counts))
+    X = np.empty((n_total, K), np.float32)
+    resp = np.empty((n_total, A), np.float32) if A else np.zeros((n_total, 0), np.float32)
+    y = np.empty(n_total, np.float32)
+    w = np.empty(n_total, np.float32)
+    sym = np.empty(n_total, np.int64)
+    dat = np.empty(n_total, np.int64)
+    tim = np.empty(n_total, np.int64)
+
+    c = 0
     for occ, d in enumerate(date_list):
-        df = part(int(d))
-        if df is None:
+        n = counts[occ]
+        if n == 0:
             continue
-        n = df.height
-        X_parts.append(df.select(feature_cols).to_numpy().astype(np.float32))
-        resp_parts.append(df.select(aux_cols).to_numpy().astype(np.float32)
-                          if aux_cols else np.zeros((n, 0), np.float32))
-        y_parts.append(df.select(target).to_series().to_numpy().astype(np.float32))
-        w_parts.append(df.select("weight").to_series().to_numpy().astype(np.float32))
-        sym_parts.append(df.select("symbol_id").to_series().to_numpy().astype(np.int64))
-        time_parts.append(df.select("time_id").to_series().to_numpy().astype(np.int64))
-        date_parts.append(np.full(n, int(group_override[occ]) if group_override is not None
-                                  else int(d), dtype=np.int64))
-    return FitData(
-        X=np.concatenate(X_parts), resp=np.concatenate(resp_parts),
-        y=np.concatenate(y_parts), w=np.concatenate(w_parts),
-        symbols=np.concatenate(sym_parts), dates=np.concatenate(date_parts),
-        times=np.concatenate(time_parts),
-    )
+        df = pl.read_parquet(path_for(d))
+        if df.height != n:
+            raise ValueError(
+                f"date {int(d)}: partition has {df.height} rows, manifest says {n}")
+        X[c:c + n] = df.select(feature_cols).to_numpy()
+        if A:
+            resp[c:c + n] = df.select(aux_cols).to_numpy()
+        y[c:c + n] = df.get_column(target).to_numpy()
+        w[c:c + n] = df.get_column("weight").to_numpy()
+        sym[c:c + n] = df.get_column("symbol_id").to_numpy()
+        tim[c:c + n] = df.get_column("time_id").to_numpy()
+        dat[c:c + n] = (int(group_override[occ]) if group_override is not None
+                        else int(d))
+        c += n
+        del df
+    assert c == n_total
+    return FitData(X=X, resp=resp, y=y, w=w, symbols=sym, dates=dat, times=tim)
 
 
 def build_fitdata_for_dates(
     data_dir: Path, manifest: dict, date_list: np.ndarray,
     group_override: np.ndarray | None = None,
+    aux_cols: list[str] | None = None,
 ) -> FitData:
     """Assemble a FitData for an arbitrary list of dates, reading only those.
 
@@ -205,12 +260,26 @@ def build_fitdata_for_dates(
     partition per date. Either way the returned FitData is identical.
     """
     if manifest.get("format") == "parquet":
-        return _build_fitdata_parquet(data_dir, manifest, date_list, group_override)
+        return _build_fitdata_parquet(data_dir, manifest, date_list,
+                                      group_override, aux_cols)
     K = manifest["K"]
     X_mm = np.memmap(data_dir / manifest["X_file"],
                      dtype=np.float16 if manifest["precision"] == "float16" else np.float32,
                      mode="r", shape=(manifest["N"], K))
     resp = np.load(data_dir / "resp.f16.npy", mmap_mode="r")
+    if aux_cols is not None and aux_cols != manifest["aux_cols"]:
+        # the memmap's aux matrix is frozen at precompute time — a requested
+        # subset/reorder is fine; anything else needs a parquet pool exported
+        # with --include-responders (or a fresh precompute)
+        missing = [c for c in aux_cols if c not in manifest["aux_cols"]]
+        if missing:
+            raise ValueError(
+                f"aux targets {missing} not in this memmap's aux matrix "
+                f"({manifest['aux_cols']}). Use a parquet pool exported with "
+                "--include-responders, or re-run precompute_dataset with "
+                f"--aux-targets including them.")
+        sel = [manifest["aux_cols"].index(c) for c in aux_cols]
+        resp = resp[:, sel]
     y = np.load(data_dir / "y.f32.npy", mmap_mode="r")
     w = np.load(data_dir / "w.f32.npy", mmap_mode="r")
     symbols = np.load(data_dir / "symbols.i16.npy", mmap_mode="r")
@@ -249,6 +318,12 @@ def build_fitdata_for_dates(
 
 def walk_forward(pipe: FullPipeline, df: pl.DataFrame, valid_dates: np.ndarray, target_col: str):
     pipe = copy.deepcopy(pipe)
+    # The recurrent predict path reshapes flat rows assuming TIME-MAJOR
+    # (time, symbol) order — true for raw-path frames, FALSE for parquet
+    # pool partitions (exported symbol-major). Sorting here is idempotent
+    # for the raw path and fixes the parquet path (scrambled sequences:
+    # static ~0, online ~half — measured on Kaggle 2026-07-19).
+    df = df.sort([COL_DATE, "time_id", "symbol_id"])
     preds, ys, ws = [], [], []
     for i, dt in enumerate(valid_dates):
         day = df.filter(pl.col(COL_DATE) == dt)
@@ -302,8 +377,34 @@ def main() -> None:
                    help="dates per batch. 1 = per-date (default). Use 8-16 on GPU "
                         "to actually utilise it (the RNN barely benefits at bs=1).")
     p.add_argument("--patience", type=int, default=None, help="early-stopping patience")
+    p.add_argument("--hidden", type=str, default=None,
+                   help="comma-separated hidden sizes overriding the model "
+                        "config (capacity probes, e.g. '128,128,128')")
+    p.add_argument("--xsec-heads", type=int, default=None,
+                   help="override the cross-sectional attention head count "
+                        "(xsec models only). The attention embed dim follows "
+                        "the LAST hidden size (ModelRBase: n_in = "
+                        "hidden_sizes[-1]), so heads must divide it — e.g. "
+                        "hidden 96 admits 2/4/8 heads, 128 admits 2/4/8/16.")
+    p.add_argument("--aux-targets", type=str, default=None,
+                   help="comma-separated aux responder columns (default: the "
+                        "pool manifest's). Spread-aux example: "
+                        "'responder_0,responder_2,responder_7,responder_8' — "
+                        "the venue spreads are ~20x more predictable "
+                        "(r2 tail R²=0.17), i.e. far stronger aux "
+                        "supervision. Memmap pools only carry the aux cols "
+                        "frozen at precompute; parquet pools exported with "
+                        "--include-responders carry all nine.")
     p.add_argument("--tag", type=str, required=True, help="label for this bag member")
     p.add_argument("--out", type=str, required=True)
+    p.add_argument("--watch", action="store_true",
+                   help="attach the tslab SETOL TrainingWatcher: per-epoch "
+                        "layer-spectrum snapshots, verdicts json + dashboard "
+                        "png next to the member outputs")
+    p.add_argument("--keep-epochs", action="store_true",
+                   help="save every epoch's state dict under {out}/epochs/ — "
+                        "enables SETOL-picked stopping + epoch bagging "
+                        "post hoc (~4-8MB per epoch)")
     args = p.parse_args()
 
     data_dir = Path(args.data)
@@ -344,9 +445,13 @@ def main() -> None:
           f"→ {len(train_dates)} draws / {n_unique} unique  valid={args.valid_lo}..{args.valid_hi}",
           flush=True)
 
+    aux_req = (args.aux_targets.split(",") if args.aux_targets
+               else manifest["aux_cols"])
+
     # --- Build FitData for this bag's resampled dates (from memmap) ---
     t0 = time.time()
-    train_fd = build_fitdata_for_dates(data_dir, manifest, train_dates, group_override)
+    train_fd = build_fitdata_for_dates(data_dir, manifest, train_dates,
+                                       group_override, aux_cols=aux_req)
     print(f"  train FitData: {train_fd.X.shape[0]:,} rows × {train_fd.X.shape[1]} "
           f"in {time.time()-t0:.1f}s", flush=True)
 
@@ -365,7 +470,8 @@ def main() -> None:
 
     # --- Validation FitData for early stopping (from memmap) ---
     valid_dates_pool = np.arange(args.valid_lo, args.valid_hi + 1)
-    valid_fd = build_fitdata_for_dates(data_dir, manifest, valid_dates_pool)
+    valid_fd = build_fitdata_for_dates(data_dir, manifest, valid_dates_pool,
+                                       aux_cols=aux_req)
 
     # --- Build model + fit ---
     cfg = Cfg()
@@ -382,6 +488,34 @@ def main() -> None:
         kw["batch_size"] = args.batch_size
     if args.patience is not None:
         kw["early_stopping_patience"] = args.patience
+    if args.hidden is not None:
+        sizes = [int(s) for s in args.hidden.split(",")]
+        kw["hidden_sizes"] = sizes
+        kw["dropout_rates"] = [kw["dropout_rates"][0]] * len(sizes)
+    if args.xsec_heads is not None:
+        # Only meaningful where the model config already carries attention.
+        # Silently accepting it elsewhere would "run" a capacity probe that
+        # never existed, so fail loudly instead (mirrors the --hidden policy
+        # of overriding, never inventing, kwargs).
+        if "xsec_heads" not in kw:
+            raise SystemExit(
+                f"--xsec-heads only applies to xsec models "
+                f"(*_modelr_xsec), not {args.model}")
+        kw["xsec_heads"] = args.xsec_heads
+    # nn.MultiheadAttention needs embed_dim % num_heads == 0, and the embed
+    # dim is NOT independent: ModelRBase builds the attention on
+    # n_in = hidden_sizes[-1]. So --hidden scales the attention width
+    # automatically, and the only way the pair can break is a non-divisible
+    # (last hidden, heads) combo — catch it here with the arithmetic spelled
+    # out rather than deep inside torch's constructor.
+    if kw.get("xsec_heads"):
+        n_in, heads = kw["hidden_sizes"][-1], kw["xsec_heads"]
+        if n_in % heads != 0:
+            raise SystemExit(
+                f"xsec attention: embed dim = last hidden size = {n_in} is "
+                f"not divisible by xsec_heads = {heads} "
+                f"(head_dim would be {n_in / heads:.2f}); adjust --hidden "
+                f"or --xsec-heads")
     # TimeXer needs the endogenous channel indices = the lagged-responder
     # feature columns. Derive them from the precompute manifest so the model
     # config doesn't hard-code indices that shift with the feature set.
@@ -395,17 +529,61 @@ def main() -> None:
         kw["endo_channels"] = endo
         print(f"  timexer endo_channels = {endo} ({manifest.get('lag_cols')})", flush=True)
     cfg.model_kwargs = kw
-    pipe = make_pipeline(cfg, feature_cols=manifest["feature_cols"], aux_cols=manifest["aux_cols"])
+    pipe = make_pipeline(cfg, feature_cols=manifest["feature_cols"], aux_cols=aux_req)
     # Attach the frozen preprocessor so predict()/update() re-standardize raw
     # eval data with the same train-time stats.
     with (data_dir / "preprocessor.pkl").open("rb") as f:
         pipe.preprocessor = pickle.load(f)  # noqa: S301  trusted local artifact
     assert isinstance(pipe.preprocessor, Preprocessor)
 
+    watch_state: dict = {}
+    if args.watch or args.keep_epochs:
+        # tslab is a sibling package (source import — no env mutation);
+        # snapshot layer spectra each epoch via the model's callback hook
+        if args.watch:
+            sys.path.insert(0, str(TSLAB_SRC))
+            from tslab.monitor import TrainingWatcher  # noqa: E402
+        epochs_dir = out / "epochs" / args.tag
+        if args.keep_epochs:
+            epochs_dir.mkdir(parents=True, exist_ok=True)
+
+        def _watch_cb(net, epoch, val_r2):
+            if args.watch:
+                w = watch_state.get("w")
+                if w is None:
+                    w = TrainingWatcher(net)
+                    watch_state["w"] = w
+                w.snapshot(epoch, val_metric=val_r2)
+            if args.keep_epochs:
+                torch.save({k: v.cpu() for k, v in net.state_dict().items()},
+                           epochs_dir / f"epoch_{epoch:02d}.pt")
+
+        pipe.model.epoch_callback = _watch_cb
+
     t0 = time.time()
     pipe.model.fit(train_fd, valid_fd, verbose=True)
     fit_s = time.time() - t0
     print(f"  fit: {fit_s/60:.1f} min", flush=True)
+
+    if watch_state.get("w") is not None:
+        watcher = watch_state["w"]
+        pipe.model.epoch_callback = None  # don't pickle the closure
+        # one extra snapshot AFTER fit restored the best checkpoint: the
+        # in-loop snapshots include patience-overshoot epochs, so without
+        # this the "current" verdicts describe weights we discarded
+        watcher.snapshot(getattr(pipe.model, "best_epoch", None) or -1)
+        (out / f"{args.model}_{args.tag}_health.json").write_text(
+            json.dumps({"verdicts_restored_model": watcher.verdicts(),
+                        "history": watcher.history()},
+                       indent=2, default=str))
+        print(f"  [watch] (restored best) {watcher.summary()}", flush=True)
+        try:
+            from tslab.monitor import report as tslab_report
+            health_png = out / f"{args.model}_{args.tag}_health.png"
+            tslab_report(watcher, health_png)
+            print(f"  [watch] dashboard → {health_png}", flush=True)
+        except Exception as e:  # dashboard is a nice-to-have, never fatal
+            print(f"  [watch] dashboard skipped: {e}", flush=True)
 
     ckpt = out / "checkpoints" / f"{args.model}_{args.tag}.pkl"
     with contextlib.suppress(NotImplementedError):
@@ -418,16 +596,34 @@ def main() -> None:
     # to warm the rolling stats, never scored (valid_dates filters to >=valid_lo).
     # (Not a leakage concern — lookback dates are past training data, available
     # at inference via the lag mechanism.)
-    cfg_eval = Cfg()
-    # CRITICAL: the eval frame must have the SAME feature columns as training,
-    # including the lagged responders — otherwise the input width won't match
-    # the trained model. Mirror the precompute's lag config.
-    cfg_eval.lagged_responders = list(manifest.get("lagged_responders", []))
-    # dates needed to fill a rolling_window-step trailing window, + 1 margin
-    lookback = (cfg_eval.rolling_window + 967) // 968 + 1
-    cfg_eval.min_date_id = args.valid_lo - lookback
-    cfg_eval.max_date_id = args.valid_hi
-    df_eval = prepare_dataset(cfg_eval, storage_precision="float32")
+    if manifest.get("format") == "parquet":
+        # Portable path (Colab/Kaggle: no raw competition data available).
+        # The pool partitions already hold the standardized features, target,
+        # weight and aux columns — build the eval frame straight from them
+        # and disable re-standardization (the values are already in model
+        # space). Protocol note vs the raw path: the online-scaler
+        # adaptation is unavailable here — eval uses frozen train-time
+        # stats, a slightly more conservative variant of the walk.
+        part_dir = data_dir / "data"
+        frames = [
+            pl.read_parquet(part_dir / f"date_id={d}" / "part.parquet")
+            for d in range(args.valid_lo, args.valid_hi + 1)
+            if (part_dir / f"date_id={d}" / "part.parquet").exists()
+        ]
+        df_eval = pl.concat(frames)
+        pipe.preprocessor = None
+    else:
+        cfg_eval = Cfg()
+        # CRITICAL: the eval frame must have the SAME feature columns as
+        # training, including the lagged responders — otherwise the input
+        # width won't match the trained model. Mirror the precompute's lag
+        # config.
+        cfg_eval.lagged_responders = list(manifest.get("lagged_responders", []))
+        # dates needed to fill a rolling_window-step trailing window, +1 margin
+        lookback = (cfg_eval.rolling_window + 967) // 968 + 1
+        cfg_eval.min_date_id = args.valid_lo - lookback
+        cfg_eval.max_date_id = args.valid_hi
+        df_eval = prepare_dataset(cfg_eval, storage_precision="float32")
     valid_dates = np.arange(args.valid_lo, args.valid_hi + 1)
     valid_dates = valid_dates[np.isin(valid_dates,
                                       df_eval.select(pl.col(COL_DATE).unique()).to_series().to_numpy())]

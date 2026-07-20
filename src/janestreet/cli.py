@@ -55,6 +55,10 @@ def _parse_cfg(args: argparse.Namespace) -> Cfg:
     if args.seed is not None:
         cfg.seed = args.seed
         cfg.model_kwargs.setdefault("seed", args.seed)
+    if args.aux_targets:
+        cfg.aux_targets = args.aux_targets.split(",")
+    if args.realized_aux:
+        cfg.realized_aux = True
     cfg.verbose = not args.quiet
     return cfg
 
@@ -73,6 +77,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--test-size", type=int, default=None)
     p.add_argument("--device", default=None)
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--aux-targets", default=None,
+                   help="comma-separated aux responder columns (overrides cfg)")
+    p.add_argument("--realized-aux", action="store_true",
+                   help="synthesize realized (nowcast) responder_11/12 aux targets")
     p.add_argument("--quiet", action="store_true")
 
 

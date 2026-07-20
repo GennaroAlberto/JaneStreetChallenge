@@ -1,0 +1,168 @@
+\chapter{To Smooth or Not to Smooth}
+\label{ch:smoothing}
+
+``The data is noisy --- let me smooth it'' is among the most natural
+instincts in time-series work, and in this genre it is usually wrong in an
+instructive way. This chapter builds a small theory of when temporal
+filtering helps, when it destroys the only signal you have, and what the
+correct operation is when the data arrives \emph{already} smoothed.
+
+\section{Filters, in one page}
+
+A causal linear filter maps a series $x_t$ to
+$\tilde x_t = \sum_{j \ge 0} h_j\, x_{t-j}$. The two workhorses:
+
+\begin{itemize}
+\item \textbf{SMA($w$)}: $h_j = 1/w$ for $j < w$. Frequency response is the
+  Dirichlet kernel of \S\ref{sec:fourier}: passes slow oscillations,
+  crushes anything faster than $\sim 1/w$, with hard nulls at multiples of
+  $1/w$. Group delay $\approx (w{-}1)/2$: \emph{the output lags the input
+  by half a window}.
+\item \textbf{EWMA($\alpha$)}: $h_j = \alpha(1-\alpha)^j$. Same low-pass
+  character with an exponential window; effective span
+  $\approx 2/\alpha - 1$; delay $\approx (1-\alpha)/\alpha$ steps. Prefer
+  it in streaming systems ($O(1)$ state) and when you want no hard window
+  edge.
+\end{itemize}
+
+Both are \textbf{low-pass filters}: they keep the slow component and delete
+the fast one, \emph{and they delay what they keep}. Every use of smoothing
+must answer two questions: \emph{is my signal slow or fast?} and \emph{can I
+afford the delay?}
+
+\section{Why smoothing the target is a category error here}
+
+Chapter~\ref{ch:targets} showed the target already \emph{is} an SMA ---
+the host applied the smoothing, and that construction is precisely what
+makes the problem hard: averaging 20 future innovations pools their
+unpredictability into one number whose conditional mean is nearly zero.
+Additional smoothing of predictions or labels cannot help --- the metric
+compares you to the raw stored target, and any filter you apply to
+$\hat y$ moves it away from the conditional mean the metric rewards
+(Chapter~\ref{ch:metric}). If you feel the urge to smooth your predictions,
+what you have actually detected is \emph{prediction variance}, and the
+correct treatments are shrinkage (calibrated, \S\ref{ch:metric}) and
+ensembling (Chapter~\ref{ch:ensembling}) --- not a moving average over time.
+
+\section{Smoothing inputs: the level/innovation decomposition}
+
+For \emph{features}, the right mental model is decomposition. Any series
+splits as
+\[
+x_t \;=\; \underbrace{\tilde x_t}_{\text{level (slow)}}
+\;+\; \underbrace{(x_t - \tilde x_t)}_{\text{innovation (fast)}},
+\]
+where $\tilde x$ is a trailing smooth. The two components carry different
+kinds of information and age at different speeds:
+
+\begin{itemize}
+\item The \textbf{level} is context: what regime is this symbol in, how
+  volatile, how high relative to its own history. It changes slowly, so its
+  half-window delay is harmless.
+\item The \textbf{innovation} is timing: what just changed. It is fast, and
+  a smoother \emph{delays and attenuates exactly it}.
+\end{itemize}
+
+\begin{keybox}[: give the model both parts; never let a smoother eat a
+timing signal]
+The correct engineering move is almost never ``smooth the feature'' but
+``split the feature'': emit the trailing mean (or the raw level) \emph{and}
+the deviation from it. The reference solution's strongest engineered block
+does exactly this --- \code{feature $-$ rolling\_mean$_{1000}$} per symbol,
+i.e.\ it keeps the \emph{high-pass} part and lets the slow level be handled
+by normalization. Notice the direction: the naive instinct smooths;
+the winning pipeline \emph{un}-smooths.
+\end{keybox}
+
+The atlas of Chapter~\ref{ch:featforensics} makes the warning quantitative.
+The lead features \feat{37}/\feat{38} peak at $k = +3$: their information
+concerns the next few steps. An SMA-20 applied to them would (i) delay
+that information by $\sim$10 steps --- past its expiry --- and (ii) dilute
+it 20-fold with stale values. One glance at a feature's lead--lag curve
+tells you whether it can survive smoothing: \textbf{if the curve's mass is
+at small $|k|$, smoothing kills it; if the mass is broad and slow,
+smoothing merely denoises it.}
+
+Where smoothing inputs \emph{does} pay: constructing deliberate multi-scale
+representations. A fast feature accompanied by its EWMA-30 (both provided!)
+lets a tree or network compute ``current value relative to its recent
+norm'' --- which is the level/innovation split again, arrived at from the
+other side.
+
+\section{When the data arrives pre-smoothed: deconvolve}
+
+The genre's sharpest smoothing insight is the inverse one. Forensics found
+three features (\feat{12}/\feat{67}/\feat{70}) that are themselves SMA-160
+of some hidden series (\S\ref{sec:featdeconv}) --- the host shipped them
+already low-passed. For such features the informative part --- the recent
+increment of the underlying series --- is attenuated by a factor
+$\sim w$ and buried under a huge stale level. Three escalating remedies:
+
+\begin{enumerate}
+\item \textbf{Short difference}: $x_t - x_{t-\delta}$ removes the common
+  stale mass; for an SMA-$w$ input, the difference over $\delta$ steps
+  equals the mean of the $\delta$ newest underlying values minus the
+  $\delta$ oldest --- a band-pass around ``what changed recently.'' Cheap,
+  robust, first thing to try.
+\item \textbf{Difference at the detected window}: $x_t - x_{t-w}$
+  telescopes an SMA-$w$ into the mean of the $w$ newest underlying values
+  minus the mean of the $w$ before them --- a clean two-window momentum
+  with no stale overlap. Requires knowing $w$, which the ACF ramp gives
+  you.
+\item \textbf{Ridge deconvolution} (\S\ref{sec:deconv}): reconstruct the
+  underlying series itself. Maximal resolution; requires the regularization
+  machinery and validation checks; reserve it for series important enough
+  to justify the care (for us: the responder paths, where the deconvolved
+  $\hat s$ became the reference signal for the entire atlas).
+\end{enumerate}
+
+The derivation you were promised in Chapter~\ref{ch:targets}'s exercise
+lands here: the first difference of SMA-$w$-of-white-noise has
+autocorrelation $-1/2$ at... no --- work it out; the point of the exercise
+is that differencing a smoothed series produces a specific, recognizable
+negative-correlation signature at the window length, which is one more way
+to \emph{confirm} a detected window before you build features on it.
+
+\section{Smoothing across the cross-section}
+
+One more direction exists in a panel: smoothing across \emph{symbols} at a
+fixed time. The per-timestamp market average is exactly that --- a
+cross-sectional smoother --- and unlike temporal smoothing it involves
+\textbf{no delay}: all inputs are contemporaneous and legal. This asymmetry
+is worth internalizing: in a streaming panel, \emph{the cross-section is
+the one direction you can average without paying latency}. It is no
+coincidence that market-average features appear in every strong solution
+to this competition, while temporal smoothing of features appears in none
+of them.
+
+\section{Decision procedure}
+
+For each candidate series:
+
+\begin{enumerate}
+\item \textbf{Fingerprint it} (Chapter~\ref{ch:featforensics}): ACF shape,
+  lead--lag curve, cross-day continuity.
+\item If it is already an SMA (triangular ramp): do not smooth ---
+  \textbf{difference or deconvolve} at the detected window.
+\item If its lead--lag mass is at small positive $k$ (a timing signal):
+  do not smooth --- feed raw, and protect it from any pipeline stage that
+  smooths globally.
+\item If it is fast and noisy \emph{and} its information is slow (high
+  nowcast mass spread over many lags): smooth away --- but emit the
+  \emph{pair} (smooth, residual), not the smooth alone.
+\item If you need denoising without delay: average across the
+  cross-section, across seeds, or across models --- the delays live only
+  on the time axis.
+\end{enumerate}
+
+\begin{jsbox}[: the empirical scoreboard]
+Everything temporal-smoothing-related that we or the reference solutions
+actually shipped, reduced to a table:
+raw features (no smoothing) --- shipped;
+rolling \emph{deviation} from trailing mean --- shipped, strong;
+rolling std as a feature --- shipped;
+market average (cross-sectional smooth) --- shipped, strong;
+EWMA-30 companions --- optional extras, marginal;
+temporal smoothing of predictions or labels --- never shipped by anyone,
+in any solution we studied. The genre has voted.
+\end{jsbox}

@@ -1,0 +1,192 @@
+\chapter{The Model Zoo II: Recurrent Networks}
+\label{ch:rnn}
+
+The best single model of our campaign --- and of the 8th-place solution we
+replicated --- is a recurrent network. Not because recurrence is
+fashionable (it is not), but because three of its properties align exactly
+with this genre's physics: causal-by-construction processing, cheap
+statefulness over long days, and --- decisively --- graceful \emph{online
+adaptation}. This chapter builds the architecture from its equations up to
+the multi-branch variant that scored $+0.0092$, and collects the training
+folklore that made it work.
+
+\section{The data layout: a day is a batch}
+
+Everything begins with a tensor convention. One trading day becomes a
+tensor of shape
+\[
+(\underbrace{D}_{\text{symbols}},\ \underbrace{T}_{968 \text{ steps}},\
+\underbrace{K}_{\text{features}}),
+\]
+symbols as the batch dimension, time as the sequence dimension. The
+recurrent model reads each symbol's day left to right and emits a
+prediction per step. Three consequences of this convention, all
+load-bearing:
+
+\begin{itemize}
+\item \textbf{Causality is structural.} A left-to-right RNN cannot see
+  $t+1$ at time $t$. The entire class of within-day leakage bugs
+  (Chapter~\ref{ch:leakage}) is excluded by construction --- one reason to
+  love recurrence at review time.
+\item \textbf{The metric becomes the loss.} With one day per batch, the
+  batch-level $1 - \Rw$ is a stable, day-normalized training loss
+  (Chapter~\ref{ch:metric}).
+\item \textbf{Hidden state = accumulated intraday context.} By afternoon,
+  $h_t$ has digested the whole morning --- regime, volatility, the running
+  history of every feature --- without any feature engineering.
+\end{itemize}
+
+\section{The cells}
+
+For reference and for reading the variants below, the two standard gated
+cells. GRU:
+\begin{align*}
+z_t &= \sigma(W_z x_t + U_z h_{t-1}) &\text{(update gate)}\\
+r_t &= \sigma(W_r x_t + U_r h_{t-1}) &\text{(reset gate)}\\
+\tilde h_t &= \tanh(W_h x_t + U_h (r_t \odot h_{t-1}))\\
+h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde h_t
+\end{align*}
+LSTM adds a separate cell state $c_t$ with input/forget/output gates
+$i_t, f_t, o_t$:
+\[
+c_t = f_t \odot c_{t-1} + i_t \odot \tanh(W_c x_t + U_c h_{t-1}),
+\qquad h_t = o_t \odot \tanh(c_t).
+\]
+Gates matter here for a concrete reason: they are \emph{learned forgetting
+schedules}, and in a drifting, noisy environment the model's ability to
+discard stale context is as important as its ability to accumulate it. A
+consistent minor finding of our runs: \textbf{the LSTM edged the GRU in
+every online-refit comparison} (e.g.\ $+0.0092$ vs $+0.0089$ at matched
+budgets) despite the GRU's better static starts --- the extra forget
+machinery earns its parameters exactly when the model must keep rewriting
+its own state day after day. Minor, consistent, and the reason our
+production bag leans LSTM.
+
+\section{ModelR: the multi-branch architecture that won its tier}
+
+The 8th-place architecture (``ModelR'' in our registry,
+\code{gru\_modelr}/\code{lstm\_modelr}) is worth studying as a piece of
+design economy. It is \emph{four} parallel recurrent stacks, each ending in
+a linear head that predicts one \textbf{auxiliary responder}
+(\S\ref{sec:auxtargets}); the four branch outputs are then combined by a
+single linear layer into the final target prediction:
+\[
+\hat a^{(i)} = \text{RNN}_i(x_{1:t}) \in \mathbb R, \quad i = 1..4;
+\qquad
+\hat y_t = w^\top \big(\hat a^{(1)}, \dots, \hat a^{(4)}\big) + b .
+\]
+The training loss sums the weighted-$R^2$ losses of the target \emph{and}
+each auxiliary head. Reading the design:
+
+\begin{itemize}
+\item Each branch is forced to become an expert on one related quantity
+  (responders at other windows; synthetic forward extensions). The
+  branches cannot collapse into one another --- they answer to different
+  supervision.
+\item The final prediction is a \emph{learned ensemble of four internal
+  experts}. The variance-reduction logic of
+  Chapter~\ref{ch:ensembling} operates \emph{inside} the model.
+\item The auxiliary losses inject high-SNR gradient
+  (\S\ref{sec:auxtargets}); our nowcast-head extension raises that SNR
+  further by adding realized-window targets ($R^2 \approx 0.5$ tasks).
+\end{itemize}
+
+Measured: gru\_modelr $+0.0089$ online / lstm\_modelr $+0.0092$ online on
+280 training days --- against $+0.0075$ for the same-size single-branch
+GRU. The branches pay.
+
+\section{Training folklore that mattered}
+
+The published details of the reference solution plus our replication notes,
+in the order they bit us:
+
+\begin{itemize}
+\item \textbf{Optimizer:} AdamW, lr $10^{-3}$, weight decay $10^{-2}$;
+  gradient clipping at global norm 1.0 (non-negotiable with heavy-tailed
+  targets --- a single wild day otherwise produces a gradient that
+  scrambles the network).
+\item \textbf{Batch = one date} (all symbols); days shuffled between
+  epochs, order within a day never touched.
+\item \textbf{Early stopping} on validation weighted-$R^2$ with patience
+  $\sim$10 (Chapter~\ref{ch:diagnostics} for why patience must be long at
+  this SNR); typical convergence 15--25 epochs.
+\item \textbf{Size:} hidden sizes in the low hundreds. Our capacity
+  sweep was flat: doubling the LSTM width moved the score by less than
+  seed noise. \emph{Data and noise, not capacity, bind this problem} ---
+  budget engineering hours accordingly.
+\item \textbf{Depth over width, mildly:} 2--3 stacked recurrent layers
+  with dropout $\sim$0.1 between them; deeper stacks gave nothing.
+\item \textbf{Warm starts} for the bagging workflow: bag members
+  (Chapter~\ref{ch:ensembling}) resume from a shared checkpoint and
+  diverge via data subsets and seeds --- most of the cost of a fresh fit,
+  saved.
+\end{itemize}
+
+\section{Online refitting: where the RNN earns its keep}
+
+Chapter~\ref{ch:online} treats online learning fully; here, the
+architectural point. Each morning, the competition hands you yesterday's
+labels. The RNN update is one (or a few) gradient step(s) on yesterday's
+day-batch:
+
+\begin{lstlisting}
+def update(self, X_day, y_day, w_day):        # yesterday, now labeled
+    opt = AdamW(self.net.parameters(), lr=self.lr_refit)
+    loss = weighted_r2_loss(self.net(X_day), y_day, w_day)
+    loss.backward(); clip_grad_norm_(self.net.parameters(), 1.0)
+    opt.step()
+\end{lstlisting}
+
+Measured effect on this family: \textbf{$+0.003$ to $+0.005$}, every
+recurrent variant, every configuration --- the largest single lever in the
+entire campaign, larger than any feature block and any architecture swap.
+The same daily step barely moves attention models ($+0.0003$) and can
+\emph{destroy} hybrid ones at the wrong learning rate
+(Chapter~\ref{ch:online}'s cliff table). Why recurrence adapts so
+gracefully is worth one sentence of speculation grounded in the gate
+algebra: a gated cell's behavior is smoothly parameterized --- small weight
+updates produce small, well-conditioned changes in its temporal filtering
+--- whereas attention's routing (softmax over comparisons) can reorganize
+discontinuously under the same step size. Whatever the mechanism, the
+empirical rule is unambiguous: \emph{if the protocol delivers delayed
+labels, recurrent models convert them into score at higher efficiency than
+anything else we tested.}
+
+\begin{jsbox}[: the numbers in one place]
+280 training days, 100-day tail, identical harness:
+xgb $+0.0068$ (static);
+gru $+0.0075$ online;
+gru\_modelr $+0.0089$ online;
+lstm\_modelr $+0.0092$ online (refit lr $10^{-3}$; the sweep over refit
+lr spans $+0.0063$ static $\to$ $+0.0092$ at $10^{-3}$ $\to$ $+0.0070$ at
+$3\times10^{-3}$ --- the optimum is a plateau, not a point, but both
+edges are real cliffs).
+\end{jsbox}
+
+\section{Failure modes and their signatures}
+
+\begin{itemize}
+\item \textbf{Hidden-state staleness across regime breaks}: a model
+  trained on old data carries confident state into a new regime; static
+  scores on recent tails go \emph{negative} (we measured $-0.002$ for
+  800-day-old models). Remedy: recency windows + online refit, not bigger
+  models.
+\item \textbf{Exploding updates on wild days}: without clipping, one
+  heavy-tailed day's refit step undoes weeks of fitting. Signature: online
+  score cliff on a specific calendar date. Remedy: clip both offline and
+  online.
+\item \textbf{Silent shape bugs}: batching (symbols, time, features) makes
+  it easy to transpose symbol and time and still run. Signature: the
+  shuffle test of Chapter~\ref{ch:leakage} \emph{passes} (score survives
+  within-day shuffling) when it should fail. Run it once per architecture.
+\end{itemize}
+
+\begin{drillbox}
+Implement the smallest version of the big result: a one-layer GRU (hidden
+32) on any drifting panel, trained on a 200-step window. Score its frozen
+checkpoint on the next 50 steps; then score the same checkpoint with one
+SGD step per revealed step at lr $\in \{0, 10^{-4}, 10^{-3}, 10^{-2}\}$.
+Plot score versus refit lr. You will reproduce, in miniature, the
+plateau-and-cliffs shape that Chapter~\ref{ch:online} elevates into a
+design law.
+\end{drillbox}

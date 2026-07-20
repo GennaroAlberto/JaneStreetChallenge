@@ -1,0 +1,166 @@
+% =====================================================================
+%  Tabular Time-Series Competitions: A Field Manual
+%  Built from the Jane Street Real-Time Market Data Forecasting campaign.
+%  Compile:  latexmk -pdf main.tex   (TeX Live 2021+)
+% =====================================================================
+\documentclass[11pt,oneside]{book}
+
+\usepackage[margin=1.05in]{geometry}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{booktabs,tabularx,multirow}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,decorations.pathreplacing}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{microtype}
+\usepackage{makeidx}
+\usepackage[hidelinks,pdftitle={Tabular Time-Series Competitions: A Field Manual}]{hyperref}
+
+% ---------------------------------------------------------------------
+% palette
+\definecolor{inkblue}{HTML}{1F4E79}
+\definecolor{inkred}{HTML}{8C2F39}
+\definecolor{inkgreen}{HTML}{2F6B3C}
+\definecolor{inkgray}{HTML}{5A5A5A}
+\definecolor{paleblue}{HTML}{EEF3F9}
+\definecolor{palered}{HTML}{FAEFEF}
+\definecolor{palegreen}{HTML}{EFF7F0}
+\definecolor{palegold}{HTML}{FBF6E9}
+\definecolor{codegray}{HTML}{F5F5F5}
+
+% ---------------------------------------------------------------------
+% chapter/section styling
+\titleformat{\chapter}[display]
+  {\normalfont\huge\bfseries\color{inkblue}}
+  {\filleft\Large Chapter \thechapter}{14pt}{\Huge\filright}
+\titlespacing*{\chapter}{0pt}{-20pt}{32pt}
+\titleformat*{\section}{\Large\bfseries\color{inkblue}}
+\titleformat*{\subsection}{\large\bfseries\color{inkblue!80!black}}
+
+% ---------------------------------------------------------------------
+% boxes
+\newtcolorbox{keybox}[1][]{%
+  colback=paleblue,colframe=inkblue,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{Key idea#1}},fonttitle=\color{white}\bfseries,
+  before skip=10pt,after skip=10pt,breakable}
+\newtcolorbox{warnbox}[1][]{%
+  colback=palered,colframe=inkred,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{Pitfall#1}},fonttitle=\color{white}\bfseries,
+  before skip=10pt,after skip=10pt,breakable}
+\newtcolorbox{jsbox}[1][]{%
+  colback=palegreen,colframe=inkgreen,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{From the campaign#1}},fonttitle=\color{white}\bfseries,
+  before skip=10pt,after skip=10pt,breakable}
+\newtcolorbox{drillbox}[1][]{%
+  colback=palegold,colframe=inkgray,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{Try it yourself#1}},fonttitle=\color{white}\bfseries,
+  before skip=10pt,after skip=10pt,breakable}
+
+% ---------------------------------------------------------------------
+% code listings
+\lstdefinestyle{py}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{inkblue}\bfseries,
+  commentstyle=\color{inkgray}\itshape,
+  stringstyle=\color{inkgreen},
+  backgroundcolor=\color{codegray},
+  frame=single, framerule=0.3pt, rulecolor=\color{inkgray!40},
+  breaklines=true, showstringspaces=false,
+  aboveskip=10pt, belowskip=10pt,
+  xleftmargin=6pt, xrightmargin=6pt
+}
+\lstset{style=py}
+
+% ---------------------------------------------------------------------
+% shorthand
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\corr}{\operatorname{corr}}
+\newcommand{\sgn}{\operatorname{sign}}
+\newcommand{\Rw}{R^2_{w}}
+\newcommand{\resp}[1]{\texttt{responder\_#1}}
+\newcommand{\feat}[1]{\texttt{feature\_#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{3pt}
+\makeindex
+
+% =====================================================================
+\begin{document}
+
+\frontmatter
+\begin{titlepage}
+\centering
+{\color{inkblue}\rule{\textwidth}{2pt}}\\[26pt]
+{\Huge\bfseries Tabular Time-Series Competitions}\\[10pt]
+{\LARGE A Field Manual}\\[26pt]
+{\color{inkblue}\rule{0.5\textwidth}{1pt}}\\[26pt]
+{\large Forecasting at the edge of randomness:\\
+data forensics, leakage discipline, architectures, online learning,\\
+and the craft of squeezing signal out of a one-percent world.}\\[40pt]
+{\large Built end-to-end from the Jane Street\\
+\emph{Real-Time Market Data Forecasting} campaign}\\[60pt]
+{\large\itshape With worked examples, measured results, and the\\
+negative results that textbooks leave out.}\\[40pt]
+{\color{inkblue}\rule{\textwidth}{2pt}}
+\vfill
+{\large \today}
+\end{titlepage}
+
+\input{chapters/preface}
+\tableofcontents
+
+\mainmatter
+
+\part{The Problem}
+\input{chapters/ch01_problem}
+\input{chapters/ch02_metric}
+
+\part{Data Forensics}
+\input{chapters/ch03_targets}
+\input{chapters/ch04_features_forensics}
+
+\part{Data Discipline}
+\input{chapters/ch05_leakage}
+\input{chapters/ch06_validation}
+\input{chapters/ch07_preprocessing}
+\input{chapters/ch08_smoothing}
+
+\part{Feature Craft}
+\input{chapters/ch09_feature_patterns}
+\input{chapters/ch10_selection}
+
+\part{The Model Zoo}
+\input{chapters/ch11_trees_mlp}
+\input{chapters/ch12_rnn}
+\input{chapters/ch13_attention}
+\input{chapters/ch14_signatures}
+
+\part{Training and Operations}
+\input{chapters/ch15_online}
+\input{chapters/ch16_diagnostics}
+\input{chapters/ch17_ensembling}
+\input{chapters/ch18_synthetic}
+
+\part{The Campaign}
+\input{chapters/ch19_case_study}
+\input{chapters/ch20_negative}
+
+\appendix
+\part{Appendices}
+\input{chapters/app_checklist}
+\input{chapters/app_glossary}
+\input{chapters/app_tools}
+
+\end{document}

@@ -1,0 +1,189 @@
+\chapter{Validation Design}
+\label{ch:validation}
+
+Your validation scheme is the instrument that measures everything else. An
+uncalibrated instrument does not merely add noise --- it systematically
+selects for models that exploit its specific flaws. This chapter builds the
+walk-forward protocol we used, explains the purged and gapped variants used
+by the reference solutions, and covers the meta-question that beginners
+skip: how to know whether your validation \emph{correlates with the
+leaderboard at all}.
+
+\section{Random splits are wrong here, and why}
+
+The i.i.d.\ cross-validation reflex --- shuffle rows, split $k$ ways ---
+fails on temporal panels for three separate reasons, worth keeping distinct:
+
+\begin{enumerate}
+\item \textbf{Temporal correlation}: adjacent rows are near-duplicates
+  (our target is a 20-step moving average --- rows 3 steps apart share 85\%
+  of their window). Random splits put near-copies of training rows into
+  validation, inflating scores.
+\item \textbf{Drift} (\S\ref{sec:drift}): the deployed model predicts the
+  \emph{future}, where feature--target relationships have moved. Random
+  splits score interpolation; the task is extrapolation.
+\item \textbf{Protocol mismatch}: deployment here is a stream with daily
+  label delivery and (optionally) online refitting. A static random-split
+  score measures a model that will never exist in production.
+\end{enumerate}
+
+The fix is walk-forward evaluation: train on a contiguous past, validate on
+a contiguous future, with an embargo at the boundary
+(\S\ref{sec:embargo}).
+
+\section{The walk-forward protocol, exactly as we run it}
+
+Our standard evaluation (\code{run\_cv} in the repository) reproduces the
+8th-place solution's protocol so that numbers are comparable across the
+whole campaign:
+
+\begin{enumerate}
+\item \textbf{Split by dates, not rows.} Training pool: dates
+  $[d_0, d_1]$; validation tail: dates $(d_1, d_2]$, typically 100 days.
+  A one-day embargo separates them.
+\item \textbf{Fit} the model (and all preprocessing) on the pool.
+\item \textbf{Evaluate day by day, in order.} For each validation day $d$:
+  first, if online refitting is enabled, take one small gradient step on
+  day $d{-}1$'s now-revealed labels (this mirrors the competition's lag
+  delivery exactly); then predict all of day $d$ one timestep at a time
+  (in practice: causally, so that no within-day future is visible).
+\item \textbf{Score} the concatenated predictions with the exact
+  competition metric --- weights included, zero-mean form included.
+\end{enumerate}
+
+Two scores come out of every run: \textbf{static} (step 3 without the refit)
+and \textbf{online}. Report both, always. The gap between them is itself a
+diagnostic: large for recurrent models ($+0.003$ to $+0.005$ here), near
+zero for attention models, catastrophically negative when the refit learning
+rate is mis-set (Chapter~\ref{ch:online}) --- three different stories that a
+single blended number would hide.
+
+\begin{keybox}[: validate the process, not the checkpoint]
+If deployment includes adaptation, validation must include adaptation. A
+model is not a frozen function; it is a \emph{procedure} --- weights, plus
+update rule, plus preprocessing state. Our biggest single scoring lever
+(online refit) is invisible to any validation scheme that scores frozen
+checkpoints.
+\end{keybox}
+
+\section{Purged and gapped $k$-fold: when you need more than one fold}
+
+A single train/tail split uses data inefficiently and yields one noisy
+number. The standard upgrade for temporal data is \emph{purged group
+$k$-fold with embargo} --- the scheme the DRW winner used (six contiguous
+two-month groups, gap of one group):
+
+\begin{itemize}
+\item Partition time into $k$ contiguous groups.
+\item Each fold validates on one group, trains on the others, and
+  \textbf{purges} training rows whose label windows overlap the validation
+  group, plus an embargo margin on each side.
+\item Aggregate scores across folds --- and \emph{report the spread}, not
+  just the mean. The DRW winner's per-fold Pearson correlations were
+  $\{0.196, 0.160, 0.034, 0.142, 0.146, 0.111\}$: one regime (fold 3) was
+  nearly unpredictable. That spread is information --- it tells you score
+  variance across regimes, which a single tail cannot.
+\end{itemize}
+
+Note what purged $k$-fold does \emph{not} give you: folds that train on the
+future and validate on the past are still extrapolating backward, which is
+optimistic under drift. For final decisions we trust forward-only splits;
+purged $k$-fold earns its keep for \emph{feature selection} (fold-consistency
+screening, Chapter~\ref{ch:selection}) where you want several verdicts
+per candidate.
+
+\section{The gap variant for honest deployment simulation}
+
+The competition's private test period began months after the training data
+ended. A validation tail adjacent to training therefore \emph{overstates}
+deployable performance: your model enjoys a freshness the real one will not
+have. The fix is a \textbf{gap}: train on $[d_0, d_1]$, skip $g$ days,
+validate on $[d_1{+}g, d_2]$. The 8th-place solution ran both gapless and
+200-day-gap variants; the gap costs score (staleness) and the \emph{size of
+that cost} estimates your drift exposure on the private set. Models that
+degrade least across the gap --- typically the online-refitted ones, which
+re-adapt during the validation walk --- are exactly the ones to trust for a
+delayed test period.
+
+\section{Calibrating the instrument: CV--LB correlation}
+
+The most important property of a validation scheme is not its absolute
+level but whether \emph{improvements transfer}. The DRW winner stated his
+CV was far from the public leaderboard in level but moved with it
+consistently --- ``an increase in my local CV leads to a consistent increase
+in public LB'' --- and that correlation, not the level, is what he relied
+on. Protocol for establishing it:
+
+\begin{enumerate}
+\item Submit 3--5 models spanning a range of local scores (deliberately
+  include a weak one; you need dynamic range).
+\item Plot local score against leaderboard score. You are looking for
+  monotonicity, not identity.
+\item If monotonic: trust local, spend submissions sparingly, ignore
+  level differences. If not: your local protocol mismatches the test
+  distribution --- check the information set, the metric implementation,
+  the time period, and per-day weighting before trusting anything again.
+\end{enumerate}
+
+Budget submissions like the scarce measurements they are: each one is a
+draw from the leaderboard's own noise distribution, and public LBs of
+low-SNR competitions are themselves noisy enough that chasing them
+\emph{is} overfitting (the final-standing shakeups of every such
+competition are the receipts).
+
+\section{Validation-set bookkeeping at low SNR}
+
+Three quantitative habits, restated from Chapters~\ref{ch:problem}
+and~\ref{ch:leakage} because they live here operationally:
+
+\begin{itemize}
+\item \textbf{Know your measurement noise.} Re-score the same model with
+  different seeds ($\pm 0.0003$--$0.0008$ for our nets) and across two
+  validation windows. Effects below this floor are unresolved, full stop.
+\item \textbf{Two-tier discipline}: an iteration window and a
+  finalists-only window. The second window's verdicts are spent, not
+  reused.
+\item \textbf{Log everything} --- every run's config, score, and seed into
+  an append-only artifact directory. Selection bias thrives on forgotten
+  losers; the log is how you remember that today's ``breakthrough'' idea
+  already lost twice under different names (our repository's
+  \code{artifacts/bench/} plus \code{WHAT\_DIDNT\_WORK.md} serve exactly
+  this function).
+\end{itemize}
+
+\section{Choosing the validation period}
+
+Under drift, \emph{when} you validate is a modeling decision:
+
+\begin{itemize}
+\item \textbf{Recent tail} (our default: the last 100 days) --- closest to
+  the test distribution; the honest choice for final decisions.
+\item \textbf{Multiple windows} --- the stability gate of
+  \S\ref{sec:atlas}: any structural claim must reproduce across distant
+  windows. Feature findings, refit learning rates, and window-length
+  choices all went through this gate.
+\item \textbf{Regime coverage} --- if the training span includes an obvious
+  regime break (ours does: day-length stabilizes at date 677, and early
+  dates behave differently enough that the reference solution simply
+  discards dates before 700), validate within the regime you will deploy
+  into, and consider training there too
+  (Chapter~\ref{ch:preprocessing}).
+\end{itemize}
+
+\begin{jsbox}[: the protocol as a fixed contract]
+Every number in this book's tables was produced by the same contract:
+train through date 1598, one-day embargo, walk the tail 1599--1698 day by
+day with online refit where stated, score with the exact weighted zero-mean
+$R^2$. Freezing the contract early --- resisting the temptation to
+``improve'' it mid-campaign --- is what makes a hundred experiments
+mutually comparable, and comparability is what turns experiments into
+knowledge.
+\end{jsbox}
+
+\begin{drillbox}
+Take a model you have already trained on any temporal dataset and score it
+three ways: random 80/20 split, forward split, forward split with a gap
+equal to 10\% of your data span. The spread between the three numbers is
+your dataset's own measurement of temporal correlation plus drift --- and a
+preview of how much a naive validation scheme would have lied to you.
+\end{drillbox}

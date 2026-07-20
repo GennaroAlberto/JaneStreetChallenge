@@ -1,0 +1,229 @@
+\chapter{Leakage: The Boss Fight}
+\label{ch:leakage}
+
+At $R^2 \approx 0.01$, a leak that adds $0.001$ of fake signal --- one part
+in a thousand of the target's variance --- inflates your validation score by
+ten percent and evaporates on the private leaderboard. Leakage at low SNR is
+not one risk among many; it is the dominant failure mode, the first
+explanation you should reach for whenever a result looks good, and the
+reason this book devotes a full chapter to what other treatments cover in a
+paragraph.
+
+\section{What leakage is, precisely}
+
+A model leaks when its inputs at prediction time $t$ contain information
+that would not be available at time $t$ under the deployment protocol.
+The definition has two halves that fail independently:
+
+\begin{itemize}
+\item \textbf{Temporal leakage}: an input encodes data from times $> t$.
+  Classic vectors: centered rolling windows, forward-filled-then-shifted
+  columns, target encodings computed over the full dataset, scalers fit on
+  all rows.
+\item \textbf{Protocol leakage}: an input encodes data from times $\le t$
+  that the \emph{deployment protocol} nevertheless withholds. This is the
+  subtle half. In this competition you never observe today's responders,
+  at any earlier timestamp of today --- even though they are ``past''
+  data. A within-day lag of the target is temporally causal and still
+  illegal.
+\end{itemize}
+
+The second half is why the first commandment of this genre is:
+
+\begin{keybox}[: model the deployment information set explicitly]
+Write down, as a formal statement, exactly what is knowable at prediction
+time. For this competition: \emph{at (day $d$, time $t$) you know: all
+features of all symbols for day $d$ up to and including time $t$; all
+features and all responders for all days $< d$; nothing else.} Every
+feature must come with a one-line proof of membership in this set. If you
+cannot write the proof, the feature does not ship.
+\end{keybox}
+
+\section{A type system for features}
+
+We found it useful to force every engineered column into one of three
+types, checked at code-review time like a type annotation:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lXX@{}}
+\toprule
+type & definition & examples from the campaign \\
+\midrule
+\textbf{trailing} & function of data strictly before $t$ (possibly
+crossing days) & per-symbol rolling mean/std over the last 1000 steps;
+yesterday's responder path (the lag join); rsig momentum differences \\
+\textbf{contemporaneous} & function of data delivered \emph{at} $t$ &
+cross-symbol market average of a feature at (day, time) --- legal here
+because the gateway delivers all symbols' rows for a timestamp together \\
+\textbf{forward} & function of data after $t$ & synthetic auxiliary
+targets like $\resp{6}_{t} + \resp{6}_{t+20} + \resp{6}_{t+40}$ ---
+\emph{legal only as training targets, never as inputs} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The discipline pays in review speed: a pull request adding features is
+approved by checking each column's declared type against its
+implementation, not by re-deriving the whole pipeline's causality.
+
+Two implementation patterns are worth stealing directly:
+
+\begin{itemize}
+\item \textbf{Lags as self-joins, not shifts.} To give day $d$ access to
+  day $d{-}1$'s responders, do not \code{shift()} a sorted frame ---
+  sort-order bugs and group-boundary bleed are silent. Instead, take the
+  responder table, \emph{add one to its date column}, and left-join on
+  (symbol, date, time). The join is order-independent, missing previous
+  days produce explicit nulls, and the construction is \emph{structurally}
+  incapable of reaching forward.
+\begin{lstlisting}
+lagged = (df.select([SYM, DATE, TIME, *resp_cols])
+            .with_columns((pl.col(DATE) + 1).alias(DATE))
+            .rename({c: f"{c}_lag1d" for c in resp_cols}))
+df = df.join(lagged, on=[SYM, DATE, TIME], how="left")
+\end{lstlisting}
+\item \textbf{Trailing windows by construction.} Every rolling operation in
+  the codebase goes through one helper that only exposes trailing
+  semantics. Nobody types \code{center=True} because the parameter does not
+  exist in the internal API. (We adopted this after the near-miss described
+  below.)
+\end{itemize}
+
+\section{Preprocessing is part of the model}
+
+The most common leak in public notebooks is not a feature at all --- it is
+the scaler. Standardization statistics (means, variances, clip quantiles)
+computed over \emph{all} rows transport information from the validation
+period into training-time transformations. The effect is small per column
+and large in aggregate, and it flatters exactly the models you are trying
+to compare.
+
+The rule: \textbf{fit all preprocessing on training dates only; transform
+validation with frozen statistics; at streaming inference, update running
+statistics using only past days.} Our pipeline freezes a quantile clipper
+(fitted $[0.1\%, 99.9\%]$ bounds) and a standardizer at the training
+boundary; during walk-forward evaluation the standardizer is allowed
+\code{partial\_fit} on each day \emph{after} it has been predicted ---
+mirroring exactly what a deployed system could do.
+
+The same boundary governs \emph{data-dependent feature definitions}: the
+16-feature subset selected for rolling statistics, clustering assignments,
+symbolic-combination choices (Chapter~\ref{ch:selection}) --- all fitted on
+training dates, all frozen across the boundary.
+
+\section{Embargoes: quarantine at the border}
+\label{sec:embargo}
+
+Suppose training labels at time $t$ involve data through $t + H$ (our
+synthetic auxiliary targets reach $H = 40$ steps forward; the target itself
+reaches 20). Then a training row within $H$ steps of the validation
+boundary \emph{overlaps} the validation period: the model has literally
+been fit on statistics of rows it will be evaluated on. The cure is an
+\textbf{embargo}: discard a buffer of width $\ge H$ between the last
+training timestamp and the first validation timestamp.
+
+Sizing rule: the embargo must cover \emph{the longest forward reach of
+anything in the pipeline} --- label construction, forward-shifted auxiliary
+targets, rolling labels --- plus the longest \emph{backward} reach of
+validation-period features into training rows if those features are shared.
+In our setup one full trading day (968 steps) safely dominates the 40-step
+maximum reach, so a one-day embargo suffices and costs almost nothing. In
+the DRW crypto competition, the winner's cross-validation used purged
+group splits with a one-group gap for the same reason
+(Chapter~\ref{ch:validation}).
+
+\begin{warnbox}[: the leak may be in the \emph{labels}, not the features]
+Teams audit features obsessively and then compute a synthetic training
+target with \code{shift(-20)} that crosses the fold boundary. Nothing in
+the \emph{feature} pipeline is wrong; the \emph{label} pipeline leaks.
+Audit both directions: what do inputs reach backward into, and what do
+targets reach forward into?
+\end{warnbox}
+
+\section{The audit protocol}
+
+Static review catches construction bugs; only \emph{behavioral} tests catch
+the leaks you did not think of. Three tests, in increasing order of cost:
+
+\subsection{The shift test}
+
+Recompute the suspect feature (or the whole feature matrix) shifted forward
+by one timestep, retrain quickly, re-score. \textbf{Genuine predictive
+signal degrades gracefully} under a one-step delay --- the world is
+autocorrelated. \textbf{Leaked signal collapses}, because its value lived
+in exact contemporaneity with the future. A validation score that halves
+under a one-step shift is a red alert.
+
+\subsection{The shuffle test}
+
+Shuffle the within-day order of rows (keeping (feature, label) pairs
+intact), retrain, re-score. A sequence model whose score \emph{survives}
+within-day shuffling is not using temporal structure --- fine if that is
+expected, alarming if you believed its edge was temporal. A score that
+\emph{improves} under shuffling usually indicates the day-boundary handling
+was broken all along.
+
+\subsection{The too-good test}
+
+Maintain a standing ceiling estimate (Chapter~\ref{ch:problem}). Any result
+above it triggers a leak hunt \emph{before} celebration. Our operating
+threshold in this competition: validation $\Rw > 0.03$ meant ``find the
+bug.'' It fired twice; both times it was right.
+
+\begin{jsbox}[: two representative catches]
+(1) A rolling per-symbol statistic briefly computed with a centered window
+during a refactor --- one keyword argument --- produced $+0.02$ of
+fictitious score. Caught by the too-good threshold, confirmed by the shift
+test (score collapsed), fixed by the trailing-only helper API.
+(2) An early draft of the synthetic auxiliary targets crossed the
+train/validation boundary through their $\code{shift}(-40)$ reach ---
+invisible in feature audits since no \emph{feature} was wrong. Caught in
+label-direction review; fixed with the one-day embargo, which we then made
+a permanent default of the dataset precomputation script.
+\end{jsbox}
+
+\section{Leakage in the large: experiment hygiene}
+
+Information also leaks between \emph{experiments}, through you. Each time
+you evaluate a candidate on the validation tail and keep what scored
+higher, you fit the tail a little. Over a month of experiments this
+selection pressure fabricates $10^{-3}$-scale improvements out of nothing
+--- at exactly the effect size you care about. Mitigations, all cheap:
+
+\begin{itemize}
+\item \textbf{Two-tier validation}: iterate on window $A$; only finalists
+  get scored on window $B$; window $B$ verdicts are final and rare.
+\item \textbf{Pre-registration}: one line in the experiment log ---
+  \emph{hypothesis, metric, decision rule} --- written before the run.
+  This kills post-hoc rationalization (``it lost overall but look at the
+  last 20 days'') at negligible cost.
+\item \textbf{Seed-replication requirements} for any claimed effect under
+  $0.001$ (Chapter~\ref{ch:problem}).
+\item \textbf{An honest graveyard}: our \code{WHAT\_DIDNT\_WORK.md}
+  records every discarded direction with its evidence. Its quiet function
+  is anti-leak: it stops re-litigating ideas whose earlier ``promising''
+  runs were, in hindsight, selection noise.
+\end{itemize}
+
+\section{Checklist}
+
+Before any result leaves your desk:
+
+\begin{enumerate}
+\item Every feature typed trailing / contemporaneous / forward, with the
+  forward set empty of model inputs.
+\item Lags implemented as date-shifted joins; rolling ops trailing by
+  construction.
+\item All preprocessing statistics fit on training dates only; frozen
+  across the boundary; online updates use only predicted-past days.
+\item Embargo at least as wide as the pipeline's longest forward reach,
+  labels included.
+\item Shift test passed (graceful degradation), shuffle test consistent
+  with the model's supposed mechanism, score below the standing ceiling.
+\item Experiment pre-registered; effects under $0.001$ replicated across
+  seeds and a second window.
+\end{enumerate}
+
+Six lines that cost an afternoon to set up bought us months of trustworthy
+measurement. Nothing else in this book works without them: every number in
+every later chapter is credible exactly because it survived this one.

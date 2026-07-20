@@ -1,0 +1,196 @@
+\chapter{Feature Engineering Patterns}
+\label{ch:featurepatterns}
+
+Architecture gets the conference papers; features win the competitions. The
+DRW crypto winner said it outright --- ``linear models are powerful \ldots{}
+because the features are powerful'' --- and our own ledger agrees: feature
+work moved our scores more than any architecture swap. This chapter
+catalogues the load-bearing patterns, each with its measured value on a
+fixed harness (XGBoost, train days 1399--1598, validation tail 1599--1698,
+baseline $\Rw = +0.00591$).
+
+\section{The master ledger}
+
+\begin{center}
+\begin{tabular}{@{}lrl@{}}
+\toprule
+feature block & $\Delta \Rw$ & verdict \\
+\midrule
+9 raw lagged responders (levels) & $-0.00003$ & dead as levels \\
+5 multi-scale differences of the lags (``rsig'') & $+0.00030$ & alive as
+differences \\
+symbol one-hot (39 columns) & $-0.00002$ & dead \\
+stable feature-profile cluster id (6 groups) & $+0.00022$ & modest \\
+40 symbolic combos, importance-seeded & $+0.00039$ & good \\
+50 symbolic combos, atlas-seeded & $+0.00052$ & better \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Individually humble; jointly, at a ceiling of $\sim 0.014$, the difference
+between mid-pack and medal contention. Now the patterns behind the rows.
+
+\section{Pattern 1: cross-sectional features}
+
+A panel's cross-section is free denoising with zero latency
+(\S\ref{ch:smoothing}). Three constructions, in rising sophistication:
+
+\begin{itemize}
+\item \textbf{Market average}: per (date, time), the mean of a feature over
+  symbols. Separates ``the tide'' from ``this boat.'' In every strong
+  solution to this competition; in ours, computed for the 16-feature
+  high-correlation subset. Delivered contemporaneously $\Rightarrow$ legal
+  (Chapter~\ref{ch:leakage}).
+\item \textbf{Cross-sectional rank or z-score}: the symbol's standing
+  within the timestamp's distribution. Robust to fat tails and regime
+  scale changes; discards the common component (so keep the market average
+  alongside --- decomposition, not destruction).
+\item \textbf{Idiosyncratic residual}: feature minus market average ---
+  the complement of the first construction, useful when the idiosyncratic
+  part has different predictive timing than the common part (our atlas
+  suggests exactly this for the reversal block; an open thread we logged
+  for future work).
+\end{itemize}
+
+\section{Pattern 2: lag structure done right}
+
+Yesterday's target path is the freshest label information the protocol
+provides, and the naive use of it fails:
+
+\begin{itemize}
+\item \textbf{Raw lag levels are dead} ($-0.00003$). Why: the responder is
+  a moving average of near-white innovations; yesterday's \emph{level} at
+  the same clock time has almost no linear bearing on today's value.
+  Trees, which split on levels, find nothing.
+\item \textbf{Differences of lags are alive} ($+0.00030$). Construction
+  knowledge (\S\ref{ch:targets}) says the nine lag columns are one signal
+  at three windows on two venues; their informative content is
+  \emph{relative}: $\text{SMA4}-\text{SMA20}$ (short momentum),
+  $\text{SMA20}-\text{SMA120}$ (medium momentum), venue $A - B$ at the
+  finest window (spread). Five engineered columns, all strictly
+  backward-looking, all deployable.
+\end{itemize}
+
+\begin{keybox}[: features the model \emph{could} compute but won't]
+Every rsig column is a linear function of inputs the model already had.
+The lift comes from \emph{pre-computing the right basis}: a depth-6 tree
+must spend six splits approximating one subtraction, and gradient descent
+must find the same direction in a 134-dimensional space against
+$R^2=0.01$ gradients. At low SNR, models do not have the statistical
+budget to discover your algebra. Do the algebra.
+\end{keybox}
+
+\section{Pattern 3: auxiliary targets --- multi-task learning as
+regularization}
+\label{sec:auxtargets}
+
+The 8th-place solution's signature idea. Her recurrent model does not just
+predict the target: four parallel branches predict four \emph{other}
+responders, and a linear combiner maps branch outputs to the final
+prediction. The auxiliary responders are forward-looking --- some
+synthesized, e.g.\ $\resp{6}_t + \resp{6}_{t+20} + \resp{6}_{t+40}$ ---
+which is legal \emph{for targets} (Chapter~\ref{ch:leakage}'s type system).
+
+Why this works at low SNR: the main task's gradient is $\sim 99\%$ noise.
+Auxiliary responders are correlated with the target but carry
+\emph{different} noise realizations; their combined gradient constrains the
+shared representation far more strongly than the target alone. It is
+regularization by supervision --- the network is pulled toward
+representations that explain a whole family of related quantities, which
+is exactly the neighborhood where the true signal lives.
+
+Our extension, derived from forensics: \textbf{nowcast heads}. The shift
+analysis (\S\ref{sec:shift}) revealed that predicting the
+\emph{just-completed} window --- $\resp{6}$ shifted back 20 steps, i.e.\
+the realized SMA --- is an $R^2 \approx 0.5$ task, two orders of magnitude
+more supervision per row than the forward task. Adding realized heads
+($\resp{6}_{t-20}$-equivalent and $\resp{8}_{t-4}$-equivalent) gives the
+shared trunk a high-SNR anchor: \emph{first learn to read the present
+perfectly; the forward head then reads the future off that representation}.
+(Implementation: two synthetic columns and a \code{num\_aux} bump ---
+auxiliary supervision is nearly free to try.)
+
+\section{Pattern 4: time itself}
+
+The timestamp index (\code{time\_id} as a raw feature) earned a top-five
+importance in every tree model we fit. Intraday phenomena --- opening
+volatility, lunchtime lulls, closing auctions --- make almost every
+relationship time-of-day-conditional. Cheap and essential; sine/cosine
+encodings if your model prefers smoothness, raw index for trees. The
+synthetic benchmark of Chapter~\ref{ch:synthetic} plants a
+time-gated mechanism precisely because the real data behaves this way.
+
+\section{Pattern 5: identity features and their limits}
+
+Adding \emph{which symbol this is} seems obviously useful and measured
+dead: one-hot symbol identity, $-0.00002$. The information was already
+consumed --- per-symbol rolling normalization (Chapter~\ref{ch:preprocessing})
+removes the per-symbol level, which is most of what identity encodes.
+What survived: a \emph{coarse, stable} grouping. Clustering symbols by
+their feature-distribution profile (a fingerprint that reproduced across
+distant windows, ARI $+0.46$ --- contrast the doomed responder-comovement
+clusters at $-0.07$) and one-hotting the six cluster ids: $+0.00022$.
+The general rule: identity helps exactly insofar as it proxies for
+\emph{stable} structure not already normalized away; test the stability
+first (\S\ref{sec:atlas}).
+
+\section{Pattern 6: symbolic feature search}
+
+The DRW winner's most transferable trick: after narrowing to a core set,
+\emph{generate} second-order candidates ---
+$x\pm y$, $x \cdot y$, $x/y$, $\min(x,y)$, $\max(x,y)$ --- screen them by
+correlation with the target on training data, keep survivors that beat
+both parents, cap mutual redundancy, and validate on the untouched tail.
+Ported to our data (\code{scripts/drw\_feature\_lab.py}):
+
+\begin{itemize}
+\item Importance-seeded pool: $+0.00039$ over baseline.
+\item \textbf{Atlas-seeded pool} (adding the forensic lead and reversal
+  features to the candidates): $+0.00052$.
+\item The accepted combos were dominated by $\min/\max$ gates ---
+  37 of 40 in the first run --- mostly of the form
+  $\min(\text{market factor}, \text{reversal feature})$. Conditional
+  structure, again something trees at practical depth do not synthesize
+  unaided.
+\item Honest limitation: candidates whose value is \emph{only}
+  interactive (zero univariate correlation --- e.g.\ differences of lag
+  levels) cannot pass a correlation screen. Screen with a small tree
+  model's gain, or seed them explicitly, if you suspect such structure.
+\end{itemize}
+
+The DRW winner went one step further and fed his final feature set through
+a small \textbf{autoencoder}, appending the 8-dimensional bottleneck as
+features --- his single biggest reported boost. We log it as the
+highest-priority untried idea from this chapter.
+
+\section{Pattern 7: engineered blocks earn their keep per-model-family}
+
+A block that helps trees can be redundant for a recurrent net (which
+computes its own temporal aggregates internally) and vice versa. Our
+bookkeeping standard: every feature block is ablated \emph{on the family
+that will consume it}. The rsig block, for instance, helps XGBoost
+($+0.0003$) but its content is partially reachable by the RNN's own
+recurrence over the lag inputs --- the RNN ablation is a separate question
+with a separate answer. Feature value is not a property of the feature;
+it is a property of the (feature, model) pair.
+
+\section{The meta-pattern}
+
+Look back over the ledger: every winning row is \emph{forensics converted
+into algebra}. Construction knowledge $\to$ lag differences. Shift analysis
+$\to$ nowcast heads. Atlas taxonomy $\to$ seeded symbolic search. Stability
+analysis $\to$ cluster features. Nothing in this chapter is a generic
+transform applied on faith; each is a hypothesis about the data-generating
+process, made computable. That is what ``feature engineering'' means in
+this genre.
+
+\begin{drillbox}
+Take the strongest feature in any panel dataset you work with and produce
+five engineered variants: its market average, its cross-sectional rank,
+its deviation from a trailing mean, its difference at the ACF-detected
+window (if smoothed), and its $\min$ with the strongest market-wide
+feature. Ablate all five on a fixed harness. You will typically find one
+winner, three nothings, and one that \emph{hurts} --- which is the expected
+base rate of this business, and why the harness matters more than the
+ideas.
+\end{drillbox}

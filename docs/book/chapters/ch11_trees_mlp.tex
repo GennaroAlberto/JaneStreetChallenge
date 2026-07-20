@@ -1,0 +1,162 @@
+\chapter{The Model Zoo I: Trees and MLPs}
+\label{ch:treesmlp}
+
+Parts I--IV built the world the models live in; the next four chapters walk
+the models themselves. We take each family in turn: what it computes, the
+inductive bias that decides where it wins, its measured record in this
+campaign, and the operational details that textbooks omit. We begin with
+the two families that ignore time entirely --- and that between them
+powered the winning solutions of several competitions in this genre.
+
+\section{Gradient-boosted trees}
+
+\subsection{What it computes}
+
+XGBoost/LightGBM fit an additive ensemble
+$\hat y(x) = \sum_{m=1}^{M} f_m(x)$ of shallow regression trees, each fit
+to the gradient of the loss at the current ensemble's predictions. Each
+tree partitions feature space with axis-aligned splits; depth $d$ trees can
+express interactions of order at most $d$.
+
+\subsection{Why it is always the first model}
+
+\begin{itemize}
+\item \textbf{Nothing to tune before signal appears.} Reasonable defaults
+  produce a competent model in one shot; neural nets need scaling,
+  initialization, and schedule choices before they beat zero.
+\item \textbf{Invariances that match tabular data:} monotone
+  transformations of features do not matter; scales do not matter; nulls
+  are handled natively; heavy tails only shift split points.
+\item \textbf{It doubles as a measurement instrument:} SHAP importances
+  drive the selection loop of Chapter~\ref{ch:selection}, and a fixed XGB
+  harness is our standard ablation meter for feature blocks
+  (Chapter~\ref{ch:featurepatterns}) --- fast, deterministic given a seed,
+  and sensitive enough to resolve $10^{-4}$-scale effects with fixed data.
+\end{itemize}
+
+Its measured record here: $+0.0059$ on 200 recent days, $+0.0068$ on 280
+--- competitive with far more elaborate architectures --- and a permanent
+seat in the final ensemble because tree errors decorrelate beautifully
+from neural errors (Chapter~\ref{ch:ensembling}).
+
+\subsection{The blind spots, measured}
+
+\begin{itemize}
+\item \textbf{No temporal state.} A tree sees a row. All sequence context
+  must arrive as features --- which is why Chapter
+  \ref{ch:featurepatterns}'s engineered blocks exist. Where recurrent
+  models gained $+0.003$--$0.005$ from online refit, trees as we ran them
+  are static (retraining nightly is possible but a different, heavier
+  operation).
+\item \textbf{Smooth interactions cost depth.} The symbolic-combo result
+  is a direct measurement: features like $\min(f_a, f_b)$, each parent
+  already available, added $+0.0005$ --- structure a depth-6 forest
+  demonstrably had not synthesized from 34 million rows. Axis-aligned
+  splits approximate diagonal or multiplicative structure expensively;
+  at low SNR the boosting process spends its statistical budget elsewhere
+  first.
+\item \textbf{Extrapolation is flat.} Outside the training hull,
+  predictions saturate at leaf values. Under drift this is half blessing
+  (no wild extrapolations), half curse (no adaptation).
+\end{itemize}
+
+\subsection{Operational notes}
+
+Configuration that mattered here: \code{tree\_method=hist} with
+\code{max\_bin=128} (accuracy indistinguishable, memory and speed much
+better at this scale); \code{min\_child\_weight} $\sim$10 and subsampling
+(row 0.8 / column 0.5) as the main overfitting brakes; early stopping on
+the \emph{weighted} eval metric with weights passed to the eval set
+(Chapter~\ref{ch:metric}); $n \sim 1500$ rounds offered but early stopping
+typically firing near 100--170. One platform trap that cost us an
+afternoon: mixing xgboost and torch in one process on macOS doubles up the
+OpenMP runtime --- deadlocks at high thread counts, segfaults on pickle;
+we run XGB single-threaded inside evaluation harnesses and never pickle
+boosters alongside torch (prediction dumps as \code{.npz} instead).
+
+\section{The MLP}
+
+\subsection{What it computes, and the DRW lesson}
+
+Dense layers over the feature vector; no recurrence, no attention, no
+notion of time. It is tempting to dismiss --- our own first result was a
+plain MLP on all 130 columns scoring $\bm{-0.0026}$, worse than predicting
+zero. The DRW crypto winner's \emph{protagonist} model was a 3-layer MLP
+scoring at the top of a 1{,}000-team leaderboard. Same family; the
+difference was everything upstream: he fed it $\sim$40 forensically
+curated features plus symbolic combos plus AE factors, while our early MLP
+drank from the raw firehose.
+
+\begin{keybox}[: the MLP is a measurement of your features]
+An MLP has just enough capacity to exploit clean features and no inductive
+machinery to rescue dirty ones. If your MLP is far below your XGB, your
+feature set relies on tree-style robustness (nulls, outliers, monotone
+weirdness) --- clean it. If your MLP approaches or beats trees, your
+features are doing the work and \emph{every} downstream architecture will
+benefit. Track the XGB--MLP gap as a feature-quality dashboard.
+\end{keybox}
+
+\subsection{Training an MLP at low SNR: the DRW recipe}
+
+Three of his choices generalize and are cheap to adopt:
+
+\begin{itemize}
+\item \textbf{Loss = $0.6\,\mathrm{MSE} + 0.4\,(1 - \rho_{\text{Pearson}})$.}
+  Pure MSE gradients at $R^2 = 0.01$ are dominated by irreducible noise;
+  the correlation term rewards co-movement --- the controllable part ---
+  and empirically stabilized his training. (Where the metric \emph{is}
+  weighted $R^2$ and batches are whole days, training on $1-\Rw$ directly
+  is the equivalent move; Chapter~\ref{ch:metric}.)
+\item \textbf{SGD over Adam.} His MLPs generalized better under plain SGD;
+  a commenter reported Muon better still. Adaptive optimizers' per-parameter
+  step sizes are quick to fit noise structure; at low SNR, dumber and
+  slower optimization is a regularizer. Our recurrent models kept AdamW
+  \emph{for the offline phase} but the finding transfers as: treat the
+  optimizer as a regularization hyperparameter, not a solved default.
+\item \textbf{Robustness over cleverness.} His stated post-mortem: added
+  regularization could not recover a score that feature drift had taken;
+  re-auditing features (the recycling step, Chapter~\ref{ch:selection})
+  could. When an MLP degrades on newer data, suspect the features before
+  the weights.
+\end{itemize}
+
+\subsection{Where the MLP sits in a panel pipeline}
+
+Even without temporal machinery, the MLP has two structural roles:
+
+\begin{enumerate}
+\item \textbf{Ensemble diversifier}: its errors decorrelate from both
+  trees (different function class) and RNNs (no temporal state), making it
+  a candidate stream even at a lower solo score
+  (Chapter~\ref{ch:ensembling}'s admission rule).
+\item \textbf{Head for engineered temporal features}: an MLP over
+  signature features, atlas-selected lags, and rolling statistics is a
+  legitimate sequence model in disguise --- all the temporal work moved
+  into the features. Our \code{mlp\_sig} variant (MLP over path-signature
+  features, Chapter~\ref{ch:signatures}) scored $+0.0066$ online ---
+  above XGB, below the RNNs --- with the entire temporal burden carried
+  by its inputs.
+\end{enumerate}
+
+\section{Trees versus MLP versus both}
+
+The genre's empirical regularity, visible across this competition, DRW,
+and the public solutions we studied: \textbf{tree ensembles and neural
+models finish close together, and their average finishes ahead of either.}
+The reason is not mystical: they misfit in different directions ---
+axis-aligned versus smooth, interpolating versus extrapolating,
+feature-robust versus feature-hungry. You are not choosing a champion; you
+are hiring complementary employees. The only real decision is which gets
+your tuning hours, and the answer follows from the feature-quality
+dashboard above: dirty features $\to$ trees first; clean features $\to$
+neural first; either way, both ship.
+
+\begin{drillbox}
+Reproduce the feature-quality dashboard on your own data: fix one feature
+matrix, train (a) default XGBoost, (b) a 3-layer MLP with standardized
+inputs, MSE + Pearson loss, SGD. Record the gap. Then add your five best
+engineered features (Chapter~\ref{ch:featurepatterns}'s drill) and record
+the gap again. The XGB score should move a little; the MLP score should
+move a lot --- if it doesn't, your engineered features encode robustness,
+not information.
+\end{drillbox}

@@ -72,6 +72,7 @@ class DateBatchDataset(Dataset):
         # slices on demand. Requires ``on_batch=True`` because presort
         # would touch every row.
         self.x_is_memmap = isinstance(X, np.memmap)
+        self._X_np: np.ndarray | None = None
         if self.x_is_memmap:
             if not on_batch:
                 raise ValueError(
@@ -80,8 +81,19 @@ class DateBatchDataset(Dataset):
                 )
             self.X = X  # numpy memmap, streamed per __getitem__
         else:
-            self.X = torch.from_numpy(np.ascontiguousarray(X)).float()
-            self.X = torch.nan_to_num(self.X, 0.0)
+            X_np = np.ascontiguousarray(X)
+            if X_np.dtype == np.float32:
+                # Zero-copy path: share the caller's buffer, clean NaNs in
+                # place, and let _presort_and_view permute in place too.
+                # The old out-of-place nan_to_num + fancy-index presort held
+                # X three times transiently (~14 GB on a 240-date window) —
+                # exactly what OOM-killed free-tier Colab runs.
+                np.nan_to_num(X_np, copy=False)
+                self._X_np = X_np
+                self.X = torch.from_numpy(X_np)
+            else:
+                self.X = torch.nan_to_num(
+                    torch.from_numpy(X_np).float(), 0.0)
 
         self.resp = torch.from_numpy(np.ascontiguousarray(resp)).float()
         self.y = torch.from_numpy(np.ascontiguousarray(y)).float()
@@ -112,7 +124,15 @@ class DateBatchDataset(Dataset):
         idx = torch.argsort(self.times, stable=True)
         idx = idx[torch.argsort(self.dates[idx], stable=True)]
         idx = idx[torch.argsort(self.symbols[idx], stable=True)]
-        self.X = self.X[idx]
+        if self._X_np is not None:
+            # In-place chunked permutation of the shared buffer: peak extra
+            # memory is one (N, 16) slice (~0.7 GB at 280 dates) instead of
+            # a full second copy of X. self.X already views this buffer.
+            idx_np = idx.numpy()
+            for j in range(0, self.k, 16):
+                self._X_np[:, j:j + 16] = self._X_np[idx_np, j:j + 16]
+        else:
+            self.X = self.X[idx]
         self.resp = self.resp[idx]
         self.y = self.y[idx]
         self.weights = self.weights[idx]
@@ -155,9 +175,17 @@ class DateBatchDataset(Dataset):
 
         if self.on_batch:
             t = int(self.times[rows].max().item()) + 1
-            X = X.reshape(t, -1, self.k).swapaxes(0, 1)
-            resp = resp.reshape(t, -1, resp.shape[-1]).swapaxes(0, 1)
-            y = y.reshape(t, -1).swapaxes(0, 1)
-            w = w.reshape(t, -1).swapaxes(0, 1)
+            # Rows may arrive in any within-date order: FitData slices are
+            # symbol-major, Kaggle-style frames time-major. Sort explicitly
+            # to (symbol, time) and reshape symbol-major — the old
+            # time-major reshape silently interleaved the axes for
+            # symbol-major input, placing future timesteps of the same
+            # symbol along the cross-sectional axis (leaked into the xsec
+            # attention; scrambled sequences for plain RNN validation).
+            order = torch.argsort(self.symbols[rows] * t + self.times[rows])
+            X = X[order].reshape(-1, t, self.k)
+            resp = resp[order].reshape(-1, t, resp.shape[-1])
+            y = y[order].reshape(-1, t)
+            w = w[order].reshape(-1, t)
 
         return X, resp, y, w

@@ -1,0 +1,145 @@
+\chapter[Path Signatures]{The Model Zoo IV: Path Signatures --- a Beautiful Negative Result}
+\label{ch:signatures}
+
+This chapter is a full post-mortem of an idea that was mathematically
+elegant, correctly implemented, individually competitive --- and added
+nothing. We include it at chapter length deliberately: the failure mode it
+illustrates (\emph{redundancy with an existing model family}) is one of the
+genre's most expensive lessons, and the machinery itself remains worth
+knowing for problems shaped differently than this one.
+
+\section{The mathematics, briefly}
+
+The \textbf{signature} of a path $X: [0, T] \to \mathbb R^d$ is the
+sequence of iterated integrals
+\[
+S^{(i_1, \dots, i_k)}(X) \;=\;
+\idotsint\limits_{0 < t_1 < \cdots < t_k < T}
+dX^{(i_1)}_{t_1} \cdots\, dX^{(i_k)}_{t_k},
+\qquad k = 1, 2, \dots
+\]
+collected over all index words $(i_1,\dots,i_k)$. Level 1 gives net
+increments; level 2 encodes pairwise areas (which coordinate led which);
+higher levels encode progressively finer order-of-events geometry. Two
+properties make signatures theoretically seductive for us:
+
+\begin{itemize}
+\item \textbf{Universality}: continuous functionals of a path are
+  approximated by \emph{linear} functionals of its signature --- a
+  canonical, model-free feature map for sequences.
+\item \textbf{Compression of order information}: exactly the ``what
+  happened, in what order, how fast'' content that intraday context
+  consists of.
+\end{itemize}
+
+Practical refinements we implemented (in \code{janestreet.theory
+.signatures}): truncation at depth 2--3 over $\le 8$ selected channels
+(the level-$k$ term count grows as $d^k$); the \textbf{log-signature} in a
+Lyndon-word basis (removes algebraic redundancy among signature terms);
+and a \textbf{Volterra/Hurst reweighting} --- multiplying increments by
+$(t - s)^{H - 1/2}$ before integration --- so that recent path segments
+dominate, mimicking rough-kernel memory with $H \approx 0.1$.
+
+\section{What we built and what it scored}
+
+The signature block computed, per timestep, the (log-)signature of the
+trailing window (16--64 steps) of selected feature channels, and fed it as
+extra inputs to either an MLP (\code{mlp\_sig}) or a causal transformer
+(\code{sig\_transformer}). Channel selection mattered and taught its own
+lesson:
+
+\begin{itemize}
+\item Selecting channels by \emph{univariate target correlation} made
+  things \textbf{worse} than an arbitrary default ($+0.0044$ vs
+  $+0.0049$): the signature's value lives in cross-channel monomials of
+  \emph{path-rich} series, not in marginally predictive ones ---
+  a screen aimed at the wrong property.
+\item Selecting by an \textbf{autoregressive criterion} --- ridge-fit each
+  feature's own lags against the target, rank by that $R^2$ --- found
+  channels whose \emph{paths} carry information: $+0.0059$ static, the
+  best signature variant. (Echo of Chapter~\ref{ch:selection}: the screen
+  must match the mechanism.)
+\item The refit-learning-rate cliff bit hard here first: at the RNNs'
+  refit lr the sig-transformer \emph{lost} $0.0015$ online, and at
+  $10\times$ smaller it gained $+0.0004$ --- the diagnosis that became
+  Chapter~\ref{ch:online}'s family-specific-cliff law. Final best:
+  $+0.0062$ online.
+\end{itemize}
+
+$+0.0062$ is a respectable single model --- above XGB, below the RNNs.
+Then came the only test that matters for a marginal family:
+
+\section{The ensemble verdict}
+
+Added to the standing three-stream ensemble (xgb + two online RNNs,
+$+0.0104$):
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+ensemble & $\Rw$ \\
+\midrule
+3-way (incumbent) & $+0.0104$ \\
++ sig-transformer stream (4-way average) & $+0.0101$ \\
+optimal-weight blend, 4 streams & assigns signature weight $\approx 0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The signature stream's predictions correlated with the RNN streams tightly
+enough that averaging it in \emph{diluted} the blend. The information the
+signature extracts from an intraday window --- increments, leads/lags,
+order-of-events geometry --- is evidently a subset of what a gated RNN's
+hidden state already carries by that point in the day. The mathematics is
+not wrong; it is \emph{redundant given the incumbents}.
+
+\begin{keybox}[: elegance is not additivity]
+The question for any new family is never ``is it good?'' but ``is it good
+\emph{and decorrelated from what I have}?''
+(Chapter~\ref{ch:ensembling}'s admission rule). A solo score can be earned
+by re-deriving information the ensemble already owns; only decorrelated
+error buys anything. Probe correlation \emph{before} polishing: two seeds,
+small config, correlate the validation prediction stream against each
+incumbent --- an afternoon that would have saved us several weeks.
+\end{keybox}
+
+\section{Where signatures still belong}
+
+The machinery survives in the repository (\code{janestreet.theory}), and
+the honest map of where it should pay:
+
+\begin{itemize}
+\item \textbf{No recurrent incumbent}: pipelines built on trees/MLPs only
+  (many production settings) --- signature features are the cheapest way
+  to hand path geometry to a stateless model; our \code{mlp\_sig} at
+  $+0.0066$ beat XGB with zero recurrence.
+\item \textbf{Short, irregular, or event-driven sequences} where RNN state
+  has nothing to accumulate but path geometry still discriminates
+  (medical time series, sensor bursts).
+\item \textbf{As a screen}: the AR-based channel selector we built for
+  signatures outlived them --- it is a general ``whose \emph{path} is
+  informative?'' ranking, complementary to the atlas.
+\end{itemize}
+
+\section{Post-mortem: the process failure, not the math failure}
+
+The reconstruction of how a wrong bet stayed alive for weeks, because the
+pattern is general:
+
+\begin{enumerate}
+\item \textbf{Solo-score progress masked ensemble irrelevance.} Each
+  iteration improved the signature model against itself; nobody re-ran the
+  correlation probe until late.
+\item \textbf{A confounded failure was mis-attributed.} The online-refit
+  regression looked ``architectural'' for two runs before the lr sweep
+  revealed a tuning cliff --- during which time the family's stock was
+  wrongly discounted, muddying decisions.
+\item \textbf{Sunk elegance.} The mathematics was a pleasure, and pleasure
+  is a bias. The eventual kill decision was made by one number (blend
+  weight $\approx 0$) that had been computable from week one.
+\end{enumerate}
+
+The repaired process --- decorrelation probe first, family-specific lr
+sweep before any online verdict, kill criteria written down in advance ---
+is codified in Chapters~\ref{ch:online}, \ref{ch:ensembling}, and
+\ref{ch:diagnostics}. That is what a negative result is \emph{for}.

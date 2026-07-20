@@ -1,0 +1,202 @@
+\chapter[Preprocessing and Memory Engineering]{Preprocessing, Normalization, and Memory Engineering}
+\label{ch:preprocessing}
+
+Preprocessing decisions look clerical and are architectural. The scaler you
+choose interacts with drift; the precision you store in determines what
+experiments are affordable; the row order on disk decides whether a sequence
+model trains in minutes or hours. This chapter covers the unglamorous layer
+where several of our campaign's real bottlenecks lived.
+
+\section{Know your panel's pathologies first}
+
+Before transforming anything, profile the raw table. Ours had four
+pathologies, each demanding a decision:
+
+\begin{itemize}
+\item \textbf{Ragged early history.} The number of timestamps per day drifts
+  in early data and stabilizes at 968 only from date 677. Sequence models
+  that batch a day as a fixed-shape tensor need the invariant; the reference
+  solution (and ours) simply drops dates below 700. Losing 40\% of rows
+  sounds expensive; under drift (\S\ref{sec:drift}) the old rows were
+  worth little anyway --- our window sweeps later confirmed the discard was
+  free.
+\item \textbf{Missing symbols.} Not every symbol trades every day. Every
+  reshape to (symbols $\times$ time) must handle absent (symbol, day)
+  blocks explicitly --- we keep only complete blocks per day and let the
+  cross-sectional features carry the survivors' information.
+\item \textbf{Nulls with structure.} Feature nullness is not random: some
+  features are null for entire symbols or early eras. Our profiler tracks
+  a null-rate column per feature; features crossing 50\% null in a window
+  are excluded from that window's statistics rather than imputed into
+  fiction. Where imputation is needed for tensor models we use 0 (the
+  post-standardization mean), \emph{after} the standardizer --- imputing
+  before fitting statistics contaminates them.
+\item \textbf{Heavy tails.} Financial features have outliers that are real
+  but rare. Left unclipped they dominate variance estimates and gradients
+  (Chapter~\ref{ch:metric}); clipped too aggressively they lose tail
+  information that trees, in particular, can use.
+\end{itemize}
+
+\section{Normalization: which invariance do you want?}
+
+Every normalization buys an invariance and pays with a piece of information.
+Choose deliberately, per feature family, not globally:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lXX@{}}
+\toprule
+transform & buys & pays \\
+\midrule
+global standardize (frozen) & comparable scales for NN optimization &
+none, if statistics are trailing-legal \\
+per-symbol rolling mean removal & removes slow symbol-specific level;
+adapts to drift & destroys the level (fine if level is stale; fatal if
+level is the signal) \\
+rolling std division & volatility-normalizes across symbols and eras &
+divides away volatility information --- keep a copy of the raw std as a
+feature if vol matters \\
+cross-sectional rank / z-score per timestamp & removes market-wide
+component; robust to fat tails & discards the market component ---
+reintroduce it explicitly as its own feature \\
+quantile clip at fitted bounds & tames gradient-dominating outliers &
+saturates genuine extremes (choose bounds wide: we use $[0.1\%, 99.9\%]$)\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The composition we settled on, mirroring the 8th-place solution and audited
+in Chapter~\ref{ch:leakage}: quantile clip $\to$ standardize (both fitted on
+training dates, frozen); \emph{plus} engineered columns that reintroduce
+deliberately removed information --- the per-symbol rolling deviation
+(``feature minus its own trailing mean over 1000 steps'') keeps the fast
+component while the slow level is dropped, and the cross-symbol market
+average per timestamp reintroduces the commonality that per-symbol work
+removes.
+
+\begin{keybox}[: normalization as decomposition, not destruction]
+The pattern behind every good transform above: \emph{split} a series into
+components (level + deviation; market + idiosyncratic; scale + shape) and
+hand the model each part it deserves, rather than \emph{deleting} a
+component by normalizing it away. Whenever you write a normalizer, ask what
+it removes and where that information will re-enter the pipeline --- if the
+answer is ``nowhere,'' pause. Chapter~\ref{ch:smoothing} develops the same
+principle for temporal filtering.
+\end{keybox}
+
+\section{Online statistics: the scaler is a model too}
+
+Under drift, frozen statistics go stale: a feature whose variance doubles
+mid-validation will be persistently mis-scaled by a frozen standardizer.
+The deployable compromise, matching what a live system could do:
+\textbf{freeze at the training boundary; then let running statistics update
+from days already predicted} (Welford's algorithm makes this exact and
+$O(1)$ per row). Our \code{OnlineStandardizer} does exactly this during the
+walk-forward evaluation --- \code{partial\_fit} on day $d{-}1$ after day
+$d{-}1$ is scored, never before.
+
+One subtlety worth a sentence: if both your scaler \emph{and} your model
+adapt online (Chapter~\ref{ch:online}), they co-drift. Refit-learning-rate
+sweeps must therefore be run with the scaler behavior fixed to its
+production setting, or the sweep answers a question about a system that
+will not exist.
+
+\section{Precision: float16 storage, float32 compute}
+
+At 47M rows $\times$ 150 engineered columns, storage precision decides what
+machines can hold the problem:
+
+\begin{itemize}
+\item float64: $\sim 56$ GB --- out of reach for laptops and free Colab.
+\item float32: $\sim 28$ GB --- fits big workstations only.
+\item \textbf{float16: $\sim 14$ GB} --- fits everywhere that matters.
+\end{itemize}
+
+The accuracy question: standardized features are $O(1)$ magnitudes, where
+float16's relative error is $\sim 5 \times 10^{-4}$; round-tripping our
+standardized matrix through float16 changed values by $\sim 10^{-4}$ ---
+two orders of magnitude below feature noise. The rule that makes this safe:
+\textbf{numerically sensitive operations (rolling statistics, market
+averages, standardization) run in float32; only the finished, standardized
+matrix is stored in float16; models upcast blocks to float32 at load}. We
+measured no score difference between float16-stored and float32-stored
+pipelines --- but the halved footprint converted several ``impossible''
+experiments into overnight ones.
+
+\section{Precompute once, memmap forever}
+
+The single best workflow decision of the campaign. Feature engineering
+needs the whole panel in memory (rolling windows cross day boundaries;
+market averages need all symbols), takes minutes, and is identical across
+every model. So: do it \emph{once}, and serve every experiment from the
+result.
+
+\begin{lstlisting}
+# precompute_dataset.py (sketch of the layout it writes)
+out/
+  X.f16.mmap        # (N, K) float16 memmap - standardized features
+  y.f32.npy         # target;  w.f32.npy  weights
+  resp.f16.npy      # auxiliary-target matrix
+  symbols/dates/times.i16.npy
+  preprocessor.pkl  # frozen clipper + scaler (the leakage boundary)
+  manifest.json     # feature names, per-date row ranges, config
+\end{lstlisting}
+
+Two design details carry most of the value:
+
+\begin{itemize}
+\item \textbf{Row order is (symbol, date, time).} Every (symbol, day) block
+  is contiguous, so a sequence model materializes its
+  (symbols $\times$ 968 $\times$ features) day-tensor with pure slicing ---
+  no gather, no sort, no copy. Choosing row order to match the training
+  access pattern is the difference between I/O-bound and compute-bound
+  epochs.
+\item \textbf{The manifest maps dates to row ranges.} Training on ``dates
+  1319--1598'' is a dictionary lookup plus a memmap slice. This is what
+  makes \emph{temporal bagging} (Chapter~\ref{ch:ensembling}) --- many
+  models on many overlapping date subsets --- essentially free to
+  orchestrate: every bag member reads its own date list from the same
+  file, and peak RAM stays at the size of one member's slice.
+\end{itemize}
+
+The same precompute is the natural home for the leakage boundary: the
+script takes \code{-{}-train-until}, fits the preprocessor strictly below
+it, and transforms everything with frozen statistics
+(Chapter~\ref{ch:leakage}). Downstream code \emph{cannot} re-leak what it
+never recomputes.
+
+\begin{jsbox}[: measured footprint]
+Full pool, 999 usable dates, 34.8M rows $\times$ 134 columns: precompute
+runs in 7--11 minutes at $\sim$5 GB peak RAM and writes a 9 GB float16
+memmap. A training job on a 0.6-fraction date subsample then peaks around
+9 GB --- inside a 16 GB laptop --- where the naive
+``engineer-features-then-train'' loop needed $\sim$28 GB and half an hour
+\emph{per experiment}. The memmap paid for itself on day one; every
+number in Part~V was trained from it.
+\end{jsbox}
+
+\section{Fitting statistics without materializing the world}
+
+One implementation trick generalizes: fitting the preprocessor does not
+require the full matrix in memory. Quantile clip bounds are stable
+statistics --- fit them on every $k$-th training day. Means and variances
+stream exactly via Welford updates one day at a time. Our
+\code{fit\_preprocessor\_streaming} holds one day of float32 at a time and
+never allocates the pool; the pattern converts ``needs a big machine'' into
+``needs any machine, patiently.''
+
+\section{Checklist}
+
+\begin{enumerate}
+\item Profile pathologies first: raggedness, missing blocks, structured
+  nulls, tails. Decide policies explicitly; write them down.
+\item Choose normalizations per feature family by the invariance they buy;
+  reintroduce removed components as explicit features.
+\item Fit statistics on training dates only; freeze; online-update only
+  from predicted-past days.
+\item Store float16, compute float32; verify round-trip error against
+  feature noise once.
+\item Precompute the engineered matrix once; memmap; row-order by access
+  pattern; date-range manifest for slicing.
+\item Stream statistic fitting day-by-day; never hold the pool to fit a
+  scaler.
+\end{enumerate}

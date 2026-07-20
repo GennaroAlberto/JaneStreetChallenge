@@ -73,6 +73,15 @@ class Cfg:
     aux_targets: list[str] = field(default_factory=lambda: [
         "responder_7", "responder_8", "responder_9", "responder_10",
     ])
+    # Realized (backward) aux targets — the nowcast heads. #555562: features at
+    # t linearly predict the *realized* responder_6(t-20) (the just-completed
+    # SMA-20) with R² ≈ 0.5, versus ~0.01 for the forward target. Predicting
+    # the realized path is therefore a high-SNR auxiliary task that shapes the
+    # shared representation; the forward head then reads the future off it.
+    # When True, FeatureBuilder emits responder_11 = responder_6.shift(20)
+    # (realized SMA-20) and responder_12 = responder_8.shift(4) (realized
+    # SMA-4). Add them to aux_targets and bump the model's num_aux to use.
+    realized_aux: bool = False
     # Lagged (previous-day) responders to add as INPUT features. At date d,
     # ``responder_{r}_lag1d`` = responder_r from date d-1 at the same
     # (symbol, time_id) — exactly what the competition's lags.parquet

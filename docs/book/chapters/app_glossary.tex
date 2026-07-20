@@ -1,0 +1,142 @@
+\chapter{Glossary}
+\label{app:glossary}
+
+\begin{description}[style=nextline, itemsep=2pt]
+
+\item[ACF (autocorrelation function)] Correlation of a series with itself
+at each lag. The genre's primary fingerprint reader: triangular ramp with
+cutoff at $w$ $\Rightarrow$ SMA($w$) of noise; geometric decay
+$\Rightarrow$ AR/level series. (Ch.~\ref{ch:targets})
+
+\item[Alpha score] Atlas summary: a feature's mean correlation with the
+(deconvolved) underlying signal over future lags inside the target's
+window --- the predictive part. Contrast \emph{nowcast score}.
+(Ch.~\ref{ch:featforensics})
+
+\item[Auxiliary targets / aux heads] Additional supervised outputs
+(other responders, synthetic forward or realized quantities) trained
+alongside the main target to shape a shared representation; legal
+because targets may look forward. (Ch.~\ref{ch:featurepatterns})
+
+\item[Ceiling (noise ceiling)] The maximum achievable score given the
+information set --- the variance share of the target that is predictable
+at all. Estimate before modeling. (Ch.~\ref{ch:problem})
+
+\item[Contemporaneous feature] Computed from data delivered at prediction
+time $t$ (e.g.\ the cross-symbol market average at a timestamp). Legal
+under this protocol. (Ch.~\ref{ch:leakage})
+
+\item[Cross-sectional] Across symbols at a fixed timestamp --- the panel
+direction with no temporal latency. (Ch.~\ref{ch:featurepatterns})
+
+\item[Deconvolution] Inverting a known linear filter (e.g.\ an SMA) to
+recover the underlying series; regularized (ridge/Tikhonov) because
+additive noise makes exact inversion ill-posed.
+(Ch.~\ref{ch:featforensics})
+
+\item[Drift] Slow change in the feature--target relationship over time.
+Causes: regime change, adaptation by market participants, pipeline
+changes. Antidotes: recency windows, online refit.
+(Ch.~\ref{ch:problem}, \ref{ch:online})
+
+\item[Embargo] A buffer of discarded data between training and validation
+periods, at least as wide as the pipeline's longest forward reach
+(labels included). (Ch.~\ref{ch:leakage})
+
+\item[Endogenous / exogenous split] Architectural separation of the
+target's own history (fully known, non-causally attendable when
+delivered as daily lags) from streaming covariates (must stay causal).
+TimeXer's organizing idea. (Ch.~\ref{ch:attention})
+
+\item[Fold-consistency (SHAP-consistency)] Feature-selection criterion:
+keep features important in (nearly) all temporally distinct CV folds,
+not just on average --- a stability filter on importance.
+(Ch.~\ref{ch:selection})
+
+\item[Lead--lag atlas] Per-feature curves
+$\corr(x_t, \hat s_{t+k})$ over lags $k$, summarized into alpha/nowcast/
+peak statistics; the campaign's forensic centerpiece.
+(Ch.~\ref{ch:featforensics})
+
+\item[Leakage] Any pathway by which information unavailable at prediction
+time (temporally or by protocol) enters model inputs or preprocessing
+statistics. (Ch.~\ref{ch:leakage})
+
+\item[Medoid] Cluster representative: the member with maximal total
+similarity to its clustermates; used to prune redundant raw feature
+dumps. (Ch.~\ref{ch:selection})
+
+\item[Nowcast score] Atlas summary: correlation with the just-realized
+signal (backward lags) --- descriptive content. High-nowcast features
+explain the present, not the future. (Ch.~\ref{ch:featforensics})
+
+\item[Nowcast auxiliary head] An aux target equal to the
+\emph{realized} (completed) version of the target's window --- a
+high-SNR ($R^2 \approx 0.5$ here) training task anchoring the shared
+representation. (Ch.~\ref{ch:featurepatterns})
+
+\item[Online refit] A small gradient update on newly revealed labels
+(here: daily) during the evaluation/deployment walk; the genre's
+largest lever, with family-specific learning-rate plateaus and cliffs.
+(Ch.~\ref{ch:online})
+
+\item[Panel] Data indexed by (entity, date, time) --- many series
+observed on a shared clock. (Ch.~\ref{ch:problem})
+
+\item[Purged $k$-fold] Time-series CV with contiguous folds where
+training rows whose label windows overlap the validation fold are
+removed, plus an embargo. (Ch.~\ref{ch:validation})
+
+\item[Recency window] Training only on the most recent $W$ days;
+$W$ is a hyperparameter with a knee under drift. (Ch.~\ref{ch:online})
+
+\item[rsig block] Our engineered lag-difference features: multi-scale
+momentum (SMA4 minus SMA20; SMA20 minus SMA120) and venue spread, all
+from yesterday's responder path. (Ch.~\ref{ch:featurepatterns})
+
+\item[Seed noise] Score variation across random seeds at fixed data and
+config ($\pm 0.0003$--$0.0008$ here); the unit in which all claimed
+effects must be measured. (Ch.~\ref{ch:problem})
+
+\item[Shift test] Leak detector: recompute features shifted one step
+forward; genuine signal degrades gracefully, leaked signal collapses.
+(Ch.~\ref{ch:leakage})
+
+\item[Signature (path signature)] The sequence of iterated integrals of
+a path; a universal feature map for sequential data. Elegant; redundant
+next to recurrent state in this campaign. (Ch.~\ref{ch:signatures})
+
+\item[SMA / EWMA] Simple moving average (uniform window $w$; group delay
+$(w{-}1)/2$) / exponentially weighted moving average (span
+$\approx 2/\alpha - 1$). Both low-pass filters. (Ch.~\ref{ch:smoothing})
+
+\item[Stability gate] The requirement that any structure (feature
+ranking, clustering, selection) reproduce across temporally distant
+windows before being built upon. (Ch.~\ref{ch:featforensics})
+
+\item[Static vs.\ online score] Evaluation of a frozen model vs.\ the
+same model with the adaptation procedure running; report both, their
+gap is diagnostic. (Ch.~\ref{ch:validation}, \ref{ch:online})
+
+\item[Temporal bagging] Ensemble members trained on different
+(overlapping) date subsets of one precomputed pool; cheap decorrelation.
+(Ch.~\ref{ch:ensembling})
+
+\item[Trailing feature] Computed strictly from data before $t$
+(rolling statistics, lags). The default-legal feature type.
+(Ch.~\ref{ch:leakage})
+
+\item[Variate token (inverted attention)] Treating each feature (rather
+than each timestep) as an attention token, so attention models
+cross-feature structure; made causal by applying it within single
+timesteps. (Ch.~\ref{ch:attention})
+
+\item[Walk-forward] Evaluation that proceeds through validation days in
+calendar order, updating whatever the deployment protocol would update.
+(Ch.~\ref{ch:validation})
+
+\item[Weighted zero-mean $R^2$] This competition's metric:
+$1 - \sum w(y - \hat y)^2 / \sum w y^2$. Zero point = predicting zeros;
+rewards shrinkage; punishes bias quadratically. (Ch.~\ref{ch:metric})
+
+\end{description}

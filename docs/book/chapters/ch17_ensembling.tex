@@ -1,0 +1,150 @@
+\chapter{Ensembling}
+\label{ch:ensembling}
+
+Chapter~\ref{ch:problem} argued that at low SNR, estimation variance is the
+dominant error term and averaging is the dominant cure. This chapter turns
+that argument into procedure: what to average, how to weight, how to
+manufacture diversity cheaply, and the two seductive upgrades (fitted
+weights, stacking) that measured \emph{worse} than doing nothing clever.
+
+\section{The arithmetic of averaging}
+
+For prediction streams $\hat y^{(1)}, \dots, \hat y^{(m)}$ with equal
+individual error variance $\sigma^2$ and average pairwise error correlation
+$\bar\rho$, the simple average's error variance is
+\[
+\Var\!\Big(\tfrac{1}{m}\sum_i \varepsilon^{(i)}\Big)
+= \sigma^2\Big(\frac{1-\bar\rho}{m} + \bar\rho\Big)
+\;\xrightarrow{m \to \infty}\; \sigma^2 \bar\rho .
+\]
+Two readings, both of which drove decisions:
+
+\begin{itemize}
+\item The benefit saturates fast in $m$ but is \emph{unbounded} in
+  $(1-\bar\rho)$: after three or four members, adding more of the same
+  helps little, while adding something \emph{different} keeps paying.
+  Diversity is the currency; member count is not.
+\item A weaker model with decorrelated errors can beat a stronger clone.
+  Our XGB stream scores $+0.0068$ against the LSTM's $+0.0092$, yet
+  removing XGB from the blend costs more than removing the second RNN ---
+  tree errors and neural errors disagree in structurally different
+  places.
+\end{itemize}
+
+\begin{jsbox}[: the headline blend]
+Three streams --- xgb static ($+0.0068$), gru\_modelr online ($+0.0089$),
+lstm\_modelr online ($+0.0092$) --- simple average: $\bm{+0.0104}$.
+The blend beats its best member by $+0.0012$, which is more than almost
+any single modeling idea in this book earned. Cost of the technique:
+one line of numpy.
+\end{jsbox}
+
+\section{Simple average versus fitted weights: a measured upset}
+
+Optimal linear blending --- fit weights on held-out data --- dominates the
+simple average \emph{in expectation with enough data}. At this SNR you do
+not have enough data. Our measurement: weights fit on one half of the
+validation tail, evaluated on the other half, \textbf{lost to the simple
+average every time}, and the fitted weights themselves told the story ---
+they kept collapsing into corner solutions (all weight on one stream, zero
+on whole families), the classic signature of an optimizer fitting noise.
+Weight estimation is itself a low-SNR regression with $m$ parameters and
+one noisy signal; with 3--6 streams the estimation error exceeds the gain
+over uniform weights.
+
+Non-linear stacking (an XGB meta-model over the streams) did worse still,
+for the same reason squared: more meta-capacity, same meta-noise.
+
+\begin{keybox}[: the ensemble complexity ladder]
+Climb only while a held-out set (that the weights never touched) says the
+step pays: (1) simple average $\to$ (2) sign-constrained coarse weights
+(e.g.\ family weights in $\{0.5, 1, 1.5\}$) $\to$ (3) fitted convex
+weights $\to$ (4) stacking. In this campaign the ladder ended at rung 1.
+The DRW winner's ensemble was similarly primitive: NN protagonist, XGB
+seasoning. Public post-mortems of this genre are a graveyard of rung-4
+blends that lost to rung 1 on private data.
+\end{keybox}
+
+\section{Manufacturing diversity}
+
+Ranked by measured or observed cost-effectiveness in this campaign:
+
+\begin{enumerate}
+\item \textbf{Family diversity} (trees + RNN): the largest decorrelation
+  per unit effort --- different function class, different failure
+  geometry. This is why XGB is never dropped
+  (Chapter~\ref{ch:treesmlp}).
+\item \textbf{Seed diversity}: same architecture, different seeds. Cheap,
+  reliable, small: the reference 8th-place solution averaged
+  \emph{sixteen} seeds of one architecture. At $\pm 0.0005$ seed spread,
+  averaging 4--16 seeds recovers a meaningful fraction of it.
+\item \textbf{Temporal bagging}: members trained on different
+  (overlapping) date subsets --- distinct regimes produce distinct
+  errors, and the memmap manifest
+  (Chapter~\ref{ch:preprocessing}) makes it one config line
+  (\code{resample: subsample, frac 0.6}). Our infrastructure treats
+  ``bag = list of (model, seed, date-resample) members'' as the unit of
+  experiment.
+\item \textbf{Adaptation diversity}: static and online variants of the
+  \emph{same} model decorrelate on exactly the days that drift ---
+  including both is nearly free since one is a byproduct of evaluating
+  the other.
+\item \textbf{Architecture diversity beyond family}: the expensive
+  aisle, to be shopped with the admission rule below --- our signature
+  and vanilla-transformer streams both failed it after substantial
+  investment (Chapter~\ref{ch:signatures}).
+\end{enumerate}
+
+\section{The admission rule}
+
+Codifying the campaign's most-regretted omission into procedure: a
+candidate stream earns ensemble admission by showing, on cheap probes
+(2 seeds, small config), that it is
+
+\begin{enumerate}
+\item \textbf{non-negative solo} (it clears zero robustly), and
+\item \textbf{decorrelated}: prediction-stream correlation with every
+  incumbent below a threshold we set at $\sim 0.9$, and --- the sharper
+  test --- the incumbent blend \emph{with} the candidate beats the blend
+  without it on held-out days.
+\end{enumerate}
+
+Run the probe \emph{before} polishing the candidate
+(Chapter~\ref{ch:signatures}'s post-mortem: solo-score progress is a
+treadmill if the stream is redundant). Notice the rule's corollary: a
+mediocre-looking model can be admitted (XGB) while an impressive one is
+rejected (sig-transformer, $+0.0062$ solo, blend weight zero). The
+ensemble does not care about résumés.
+
+\section{Ensembling adaptive models}
+
+Two operational notes specific to this genre's online dimension
+(Chapter~\ref{ch:online}):
+
+\begin{itemize}
+\item \textbf{Blend after adaptation, not before}: each member refits
+  itself daily, then predictions are averaged. Averaging \emph{weights}
+  across members (as opposed to predictions) is a different, riskier
+  operation --- only valid within identical architectures, and unneeded
+  here.
+\item \textbf{Diversity drifts too.} Streams that decorrelate today may
+  converge as they all adapt toward the same recent regime. If the test
+  period is long, re-check pairwise correlations on a rolling basis ---
+  in our walks the effect was visible but small; over months it might
+  not be.
+\end{itemize}
+
+\section{Checklist}
+
+\begin{enumerate}
+\item Build the simple average of your best-per-family models before any
+  further modeling; it is the new baseline.
+\item Admit streams by the two-part rule (non-negative solo;
+  decorrelation with incumbents), probed cheaply, before polishing.
+\item Manufacture diversity in cost order: families, seeds, temporal
+  bags, adaptation variants --- architectures last.
+\item Climb the weighting ladder only while untouched held-out data says
+  each rung pays; expect to stop at rung 1.
+\item Keep the blend's member list short and auditable; log per-member
+  and blend scores per day so a degrading member is visible.
+\end{enumerate}

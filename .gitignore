@@ -1,27 +1,39 @@
-# Python envs / caches
+# --- data & derived artifacts (tens of GB; regenerable or on Kaggle) ---
+/data/
+/artifacts/
+*.parquet
+*.npz
+*.npy
+*.pkl
+*.pt
+*.dat
+*.mmap
+
+# --- Python envs / caches ---
 .venv/
 .ruff_cache/
+.pytest_cache/
 __pycache__/
 *.pyc
 *.egg-info/
+.ipynb_checkpoints/
 
-# Editor / OS
+# --- agent / assistant working files ---
+.claude/
+CLAUDE.md
+*.log
+
+# --- editor / OS ---
 .DS_Store
 
-# Claude Code worktrees / infra
-.claude/
+# --- LaTeX build artifacts (sources stay; PDF builds locally) ---
+docs/book/*.aux
+docs/book/*.fdb_latexmk
+docs/book/*.fls
+docs/book/*.out
+docs/book/*.synctex.gz
+docs/book/*.toc
+docs/book/main.pdf
 
-# Large Kaggle input data (download from the competition)
-/data/
-
-# Large / regenerable artifacts
-/artifacts/precomputed/
-*.npz
-*.pkl
-*.mmap
-*.f16.npy
-*.f32.npy
-*.i16.npy
-
-# Stray non-project dir that leaked into the worktree
+# --- stray non-project dir that leaked into the worktree ---
 /Documents/

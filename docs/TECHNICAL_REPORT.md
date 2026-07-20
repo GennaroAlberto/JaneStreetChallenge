@@ -11,7 +11,9 @@ Last updated: 2026-07-08
 
 We predict `responder_6` (a weighted-R² competition metric) from 79 anonymized
 features, per `(symbol_id, date_id, time_id)`. Target/benchmark: the 8th-place
-private-LB score was **+0.0112**.
+**public** score was +0.0112; the private LB reads 8th = **+0.010434** and
+1st ("ms capital") = **+0.013890** — see `FEATURE_RESEARCH.md` for the full
+recalibration and the feature-atlas findings.
 
 **What the responders actually are** (from Kaggle discussion #555562,
 "Reverse Engineering the Responders", and independently consistent with our own

@@ -1,0 +1,148 @@
+\chapter[The Graveyard of Negative Results]{The Graveyard: Negative Results, Properly Buried}
+\label{ch:negative}
+
+A negative result that is written down with its evidence is an asset: it
+prunes the search space forever. One that is merely remembered gets
+re-litigated every time enthusiasm returns. This chapter is our graveyard
+--- each entry with the tombstone (what died), the autopsy (why), and the
+epitaph (the general rule it purchased). Scores are weighted $R^2$ on the
+standard harness.
+
+\section{Training on more history}
+
+\textbf{Tombstone.} Curriculum training across 800 days of history:
+$+0.0077$, \emph{versus} $+0.0089$ for the same architecture on the recent
+280 days. Old-data models' \emph{static} scores on the recent tail were
+frequently negative. The window sweep (50/100/200/400 days $\to$
+$+0.0032/+0.0054/+0.0059/+0.0071$ online) rises toward a knee and the
+full-history point falls off it.
+
+\textbf{Autopsy.} Drift (\S\ref{sec:drift}): old regimes teach
+feature--target relationships that no longer hold, and at low SNR the
+model cannot tell stale structure from current structure --- extra rows
+add interference, not information.
+
+\textbf{Epitaph.} \emph{More data is not a default good under drift; the
+training window is a hyperparameter with a knee. Sweep it.}
+
+\section{Symbol identity as a feature}
+
+\textbf{Tombstone.} One-hot symbol id into XGB: $-0.00002$.
+
+\textbf{Autopsy.} Per-symbol rolling normalization
+(Chapter~\ref{ch:preprocessing}) had already removed the per-symbol level
+--- identity's main content. Thirty-nine dummy columns bought tree splits
+and nothing else. The salvageable remainder was the \emph{stable} coarse
+grouping: feature-profile clusters (+0.00022).
+
+\textbf{Epitaph.} \emph{Before adding a feature, ask what your
+normalization already removed. Identity features prosper only where
+identity-linked structure survives preprocessing --- and is stable.}
+
+\section{Symbol clustering by responder co-movement}
+
+\textbf{Tombstone.} Clusters computed on one window looked excellent
+(intra/inter co-movement ratio $\sim$18$\times$); recomputed on a later
+window, agreement with the earlier clustering was ARI $= -0.07$ ---
+chance. The planned per-cluster specialist models were cancelled without
+training one.
+
+\textbf{Autopsy.} Co-movement structure in this panel is
+regime-transient. A routing scheme built on it routes tomorrow's symbols
+by yesterday's dead map.
+
+\textbf{Epitaph.} \emph{Any structure you intend to build on must first
+pass a cross-window stability gate (\S\ref{sec:atlas}). Ten minutes of
+checking beats weeks of specialist models. Compare the atlas: same gate,
+Spearman $+0.97$ --- build on that instead.}
+
+\section{Raw lagged responders as flat features}
+
+\textbf{Tombstone.} Nine previous-day responder columns into XGB:
+$-0.00003$.
+
+\textbf{Autopsy.} As \emph{levels} at matched clock time, yesterday's
+moving averages carry almost no linear information about today's value
+(the construction: MAs of near-white innovations). Their content is
+relational --- differences across windows and venues ($+0.0003$ as the
+rsig block) or sequential (as inputs to a recurrent/endogenous stream).
+
+\textbf{Epitaph.} \emph{A dead feature is often a live feature wearing
+the wrong parameterization. Consult the construction before discarding
+the information} (Chapter~\ref{ch:featurepatterns}).
+
+\section{Bigger models}
+
+\textbf{Tombstone.} LSTM width doubled (0.9M $\to$ 1.6M parameters):
+score change within seed noise. Depth additions: same.
+
+\textbf{Autopsy.} The binding constraints are the signal budget and
+estimation variance, not expressiveness
+(Chapter~\ref{ch:problem}). Capacity beyond ``enough'' buys variance.
+
+\textbf{Epitaph.} \emph{At low SNR, capacity sweeps are flat and
+procedure sweeps are not (Chapter~\ref{ch:online}). Spend tuning hours
+where the curvature is.}
+
+\section{Signature models as ensemble members}
+
+\textbf{Tombstone.} Best signature variant $+0.0062$ solo; ensemble
+weight $\approx 0$; 4-way average \emph{below} the 3-way ($+0.0101$ vs
+$+0.0104$). Full post-mortem: Chapter~\ref{ch:signatures}.
+
+\textbf{Epitaph.} \emph{Admission is decorrelation, not solo score. Probe
+correlation before polishing.}
+
+\section{Non-linear stacking and fitted blend weights}
+
+\textbf{Tombstone.} Fitted convex weights: corner solutions, lost to the
+simple average on held-out halves. XGB meta-stacker: worse.
+
+\textbf{Autopsy.} Weight fitting is itself low-SNR estimation; with a
+handful of streams the estimation error exceeds the edge over uniform
+(Chapter~\ref{ch:ensembling}).
+
+\textbf{Epitaph.} \emph{The ensemble ladder is climbed only while
+untouched data pays you to climb; expect rung one.}
+
+\section{Univariate correlation as a feature screen}
+
+\textbf{Tombstone.} Signature channels ranked by $|\corr(x, y)|$
+underperformed an arbitrary default ($+0.0044$ vs $+0.0049$); lag
+columns, valuable in combination, score zero on the same screen and were
+nearly lost to it (Chapter~\ref{ch:selection}).
+
+\textbf{Autopsy.} The screen conflates nowcast with lead
+(\S\ref{sec:atlas}) and is blind to interaction-only value.
+
+\textbf{Epitaph.} \emph{Match the screen to the mechanism you are
+selecting for: timing screens for timing (atlas alpha bands), path
+screens for path models (AR-based), tree-gain screens for interactions.}
+
+\section{A borrowed refit learning rate}
+
+\textbf{Tombstone.} ``Online refit breaks signature-transformers'' ---
+believed for two runs; actually a $10\times$ lr mismatch; at
+$3\times10^{-5}$ the regression became a gain
+(Chapter~\ref{ch:online}).
+
+\textbf{Epitaph.} \emph{No cross-family conclusion is valid while a
+procedure hyperparameter is borrowed. Sweep first, conclude second.}
+
+\section{What the graveyard is for}
+
+Notice the pattern across tombstones: almost every death was caused by
+one of four recurring pathogens --- \textbf{drift} (sections 1, 3),
+\textbf{already-normalized-away information} (2, 4), \textbf{low-SNR
+estimation variance} (5, 6, 7), and \textbf{confounded procedure
+hyperparameters} (8, 9). The graveyard is not a list of things that are
+false; it is the empirical fingerprint of this genre's four ways of
+fooling you. When your next idea dies, check which pathogen got it ---
+and when your next idea \emph{succeeds}, check the same list before
+believing it.
+
+Maintain your own graveyard file from day one
+(\code{WHAT\_DIDNT\_WORK.md} in our repository). The discipline costs a
+paragraph per burial. It pays every time a promising-looking corpse
+knocks on the door wearing a new hat --- which, over a long campaign, is
+weekly.

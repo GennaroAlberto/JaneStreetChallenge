@@ -38,12 +38,23 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from janestreet.config import Cfg
+from janestreet.data.ingest import scan_train_dates
+
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--memmap", type=str, required=True, help="an existing memmap precompute dir")
     p.add_argument("--out", type=str, required=True)
     p.add_argument("--compression", type=str, default="zstd")
+    p.add_argument("--min-date", type=int, default=None,
+                   help="export only dates >= this (smaller Drive upload)")
+    p.add_argument("--max-date", type=int, default=None)
+    p.add_argument("--include-responders", action="store_true",
+                   help="join all nine raw responders into each partition "
+                        "(needed for --aux-targets beyond the memmap's frozen "
+                        "aux set, e.g. the spread-aux experiments). Requires "
+                        "the raw competition data locally.")
     args = p.parse_args()
 
     src = Path(args.memmap)
@@ -67,6 +78,27 @@ def main() -> None:
     ranges = manifest["date_row_ranges"]
     t0 = time.time()
     date_ids = sorted(int(d) for d in ranges)
+    if args.min_date is not None:
+        date_ids = [d for d in date_ids if d >= args.min_date]
+    if args.max_date is not None:
+        date_ids = [d for d in date_ids if d <= args.max_date]
+
+    # Optionally join all nine raw responders, aligned to memmap row order
+    # per date (both sides sorted by (date, symbol, time)).
+    resp_all = None
+    resp_names = [f"responder_{i}" for i in range(9)]
+    if args.include_responders:
+        raw = (scan_train_dates(Cfg(), date_ids[0], date_ids[-1])
+               .select(["date_id", "symbol_id", "time_id", *resp_names])
+               .collect()
+               .sort(["date_id", "symbol_id", "time_id"]))
+        wanted = set(date_ids)
+        resp_all = {}
+        for key, g in raw.group_by("date_id", maintain_order=True):
+            d_key = int(key[0] if isinstance(key, tuple) else key)
+            if d_key in wanted:
+                resp_all[d_key] = g.select(resp_names).to_numpy().astype(np.float32)
+        print(f"  joined raw responders for {len(resp_all)} dates", flush=True)
     for i, d in enumerate(date_ids):
         s, e = ranges[str(d)]
         cols = {
@@ -78,6 +110,17 @@ def main() -> None:
         }
         for a_i, a in enumerate(aux_cols):
             cols[a] = np.asarray(resp[s:e, a_i], dtype=np.float32)
+        if resp_all is not None:
+            R9 = resp_all[d]
+            if len(R9) != e - s:
+                raise ValueError(f"date {d}: raw/memmap row-count mismatch")
+            # alignment assertion: raw responder_6 vs memmap y at f16 tol
+            if not np.allclose(np.float16(R9[:, 6]).astype(np.float32),
+                               cols[manifest["target"]], atol=2e-3):
+                raise ValueError(f"date {d}: raw/memmap alignment failed")
+            for r_i, rn in enumerate(resp_names):
+                if rn not in cols:
+                    cols[rn] = R9[:, r_i]
         Xblk = np.asarray(X[s:e], dtype=np.float32)
         for f_i, f in enumerate(feature_cols):
             cols[f] = Xblk[:, f_i]

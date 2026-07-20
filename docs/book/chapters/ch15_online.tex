@@ -1,0 +1,177 @@
+\chapter{Online Learning: The Biggest Lever}
+\label{ch:online}
+
+If this book had to be compressed to one operational sentence, it would be:
+\emph{in a drifting environment with delayed labels, a small daily gradient
+step is worth more than any architecture you will try.} This chapter
+quantifies that claim, derives the protocol, and maps the cliffs.
+
+\section{The setting: delayed labels are an invitation}
+
+The competition's lag mechanism --- yesterday's full responder table
+delivered every morning (Chapter~\ref{ch:problem}) --- is not just a
+feature source. It is a supervision stream: every day, 968 labeled steps
+per symbol arrive, drawn from \emph{the most recent regime in existence}.
+A frozen model ignores them; an adaptive one converts them into score.
+
+The measured conversion rate, on our standard harness:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+model & static & online & $\Delta$ \\
+\midrule
+gru (single branch) & $+0.0025$ & $+0.0075$ & $+0.0050$ \\
+gru\_modelr & $+0.0076$ & $+0.0089$ & $+0.0013$ \\
+lstm\_modelr & $+0.0064$ & $+0.0092$ & $+0.0028$ \\
+transformer & $+0.0047$ & $+0.0050$ & $+0.0003$ \\
+sig-transformer (right lr) & $+0.0059$ & $+0.0062$ & $+0.0004$ \\
+sig-transformer (RNN's lr) & $+0.0059$ & $+0.0044$ & $\bm{-0.0015}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three facts jump out, and the rest of the chapter unpacks them: the effect
+is \textbf{large} (up to $+0.005$ --- compare the whole competitive range
+of $0.012$); it is \textbf{family-dependent} (RNNs feast, attention
+nibbles); and it can go \textbf{catastrophically negative} under
+mis-tuning.
+
+\section{The protocol}
+
+One correct loop, matching deployment exactly
+(Chapter~\ref{ch:validation}):
+
+\begin{enumerate}
+\item For each day $d$ of the evaluation walk, in calendar order:
+\item \quad receive day $d{-}1$'s labels; form the day-batch
+  (all symbols, all 968 steps);
+\item \quad take one gradient step on the weighted-$R^2$ loss of that
+  batch at learning rate $\eta_{\text{refit}}$, gradient-clipped;
+\item \quad predict day $d$ causally; score; continue.
+\end{enumerate}
+
+Design choices inside that loop that we tested or inherited:
+
+\begin{itemize}
+\item \textbf{One step, not convergence.} The daily batch is one noisy
+  draw from a moving distribution; fitting it well is overfitting it.
+  A single clipped step is a \emph{tracking} update --- exponential
+  smoothing in weight space.
+\item \textbf{Which loss:} refit on the \emph{target} head only
+  (the reference solution refits on \resp{6} alone, not the auxiliary
+  heads). The aux heads did their job shaping the representation offline;
+  online, you chase the target.
+\item \textbf{Fresh optimizer state.} Our \code{update()} constructs the
+  optimizer anew each day --- no stale Adam moments carried across a
+  regime. With one step per day, momentum has nothing useful to
+  accumulate anyway; a clean clipped step at the right $\eta$ is easier to
+  reason about and measured fine.
+\item \textbf{The scaler adapts too} (Chapter~\ref{ch:preprocessing}) ---
+  but only from already-predicted days, and its setting is frozen during
+  lr sweeps to keep the experiment single-variable.
+\end{itemize}
+
+\section{The learning-rate cliffs: a family-specific law}
+
+The central empirical finding. Sweeping $\eta_{\text{refit}}$ per family:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+$\eta_{\text{refit}}$ & lstm\_modelr & sig-transformer \\
+\midrule
+$0$ (static) & $+0.0063$ & $+0.0059$ \\
+$10^{-5}$ & --- & $+0.0061$ \\
+$3\times10^{-5}$ & --- & $\bm{+0.0062}$ \\
+$10^{-4}$ & $+0.0083$ & $+0.0061$ \\
+$3\times10^{-4}$ & $+0.0091$ & $+0.0044$ \\
+$10^{-3}$ & $\bm{+0.0092}$ & $-0.0090$ \\
+$3\times10^{-3}$ & $+0.0070$ & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Read the columns separately, then together:
+
+\begin{itemize}
+\item Each family has a \textbf{plateau} (roughly a decade wide) flanked
+  by cliffs: too small wastes the labels, too large lets one day's noise
+  scramble the network ($-0.009$ is not a typo; that is a destroyed
+  model).
+\item The plateaus are \textbf{30$\times$ apart} between families
+  ($10^{-3}$ vs $3\times10^{-5}$). A default tuned on one family sits on
+  the other's cliff.
+\item Consequence for research process: \textbf{no online-behavior verdict
+  about an architecture is valid until its own lr sweep has run.} We
+  spent two runs believing ``signature-transformers regress under refit''
+  --- an architectural-sounding conclusion that was actually a borrowed
+  hyperparameter (the full post-mortem is \S\ref{ch:signatures}).
+\end{itemize}
+
+\begin{warnbox}[: the borrowed-hyperparameter fallacy]
+Whenever a new family underperforms under a procedure tuned on an old
+family, the procedure's hyperparameters are confounded with the
+architecture. Sweep before concluding. This fallacy has a long history in
+deep learning (``X doesn't work'' $\to$ ``X needed its own lr'') and at
+low SNR it is nearly undetectable without a deliberate sweep, because all
+the numbers involved are small.
+\end{warnbox}
+
+\section{Why recurrence adapts best: a working hypothesis}
+
+The pattern --- RNNs gain 10$\times$ more from identical updates --- wants
+an explanation. Ours, offered as hypothesis with its supporting
+observations: a gated RNN's function is \emph{smoothly} parameterized
+(small weight changes $\to$ small, well-conditioned changes in its
+temporal filtering), so a single clipped step moves it a small, useful
+distance. Attention's computation routes through softmax comparisons;
+identical step sizes can reorganize retrieval patterns discontinuously,
+so safe steps must be tiny --- and tiny steps track drift slowly.
+Consistent with this: the attention families' plateaus are both lower
+\emph{and} narrower, and their best online gains ($+0.0004$) resemble a
+strongly damped version of the RNN effect. Whatever the mechanism's true
+name, the operational rule stands: \textbf{if online adaptation is
+available, weight your architecture portfolio toward families that can
+use it.}
+
+\section{Variations we tested or queued}
+
+\begin{itemize}
+\item \textbf{Recency window + refit} (tested): the two compose --- train
+  on the recent 280--400 days, \emph{and} refit daily. The window sweep's
+  knee (50 $\to$ 400 days: $+0.0032 \to +0.0071$ online for the plain GRU)
+  shifts \emph{up} at every length once refit is on; neither replaces the
+  other.
+\item \textbf{Refit-lr decay schedules} (queued): a per-day decay
+  ($\eta_d = \eta_0 \cdot 0.5^{d/h}$) interpolates between adaptation and
+  stability across a long test period; expected small positive by
+  analogy, unproven here.
+\item \textbf{Curriculum warm-starts across history} (tested, negative):
+  chronologically warm-starting through 800 days of history scored
+  \emph{below} the plain recent-window model ($+0.0077$ vs $+0.0089$).
+  Old regimes are not a curriculum; they are interference
+  (Chapter~\ref{ch:negative}).
+\item \textbf{Nightly full retrains} (industry practice, out of
+  competition scope): the heavyweight sibling of the daily step ---
+  retrain on the trailing window every $k$ days. Composes with, does not
+  replace, the light daily step.
+\end{itemize}
+
+\begin{jsbox}[: the lever in context]
+Total spread from architecture choice among our serious single models:
+$\sim 0.002$. Total spread from online refit on one architecture:
+$\bm{0.003}$ (static $\to$ tuned online). Total spread from the refit
+lr within one architecture: $\bm{0.018}$ ($-0.009$ to $+0.0092$).
+The hyperparameter of the \emph{procedure} dwarfs the choice of the
+\emph{model}. Allocate tuning attention accordingly.
+\end{jsbox}
+
+\begin{drillbox}
+Extend Chapter~\ref{ch:rnn}'s drill: add a second architecture (any small
+transformer) to your miniature drifting-panel setup and sweep refit lr
+for both on a log grid from $10^{-5}$ to $10^{-2}$. Plot both curves on
+one axis. You should see displaced plateaus and at least one
+crossed-cliff configuration --- the borrowed-hyperparameter fallacy,
+reproduced on your desk for the cost of twenty minutes of compute.
+\end{drillbox}

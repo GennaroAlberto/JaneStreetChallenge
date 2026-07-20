@@ -1,0 +1,147 @@
+\chapter[Synthetic Benchmarking]{Synthetic Benchmarking: Triage Before
+You Buy GPU Time}
+\label{ch:synthetic}
+
+An architecture evaluation on real data costs GPU-days and returns one
+noisy bit. When forensics has recovered the shape of the data-generating
+process (Part~II), a better instrument exists: \textbf{build a synthetic
+world with that shape, plant mechanisms you control, compute the optimal
+score in closed form, and triage architectures against the known ceiling
+--- at laptop cost}. This chapter presents the method and the generator we
+built (\code{scripts/synth\_bench.py}).
+
+\section{Why synthetic tests usually lie, and how to make them honest}
+
+The standard objection is sound: toy benchmarks reward toy strengths.
+Synthetic triage earns trust only under four disciplines, each fixing a
+standard failure:
+
+\begin{enumerate}
+\item \textbf{Match the SNR.} The classic sin is testing at $R^2 = 0.5$
+  where clever architectures shine, then deploying at $R^2 = 0.01$ where
+  regularization dominates everything. Calibrate the planted signal so
+  the \emph{optimal} score sits near the real problem's ceiling (ours:
+  reference $R^2 \approx 0.03$--$0.05$ against the real $0.014$ ---
+  slightly generous so verdicts resolve at small data scale, and stated
+  as such).
+\item \textbf{Match the protocol.} Run the synthetic world through the
+  \emph{identical} production harness --- same feature pipeline, same
+  frozen scalers, same walk-forward with daily online refit
+  (Chapter~\ref{ch:validation}). We achieve this mechanically: the
+  generator writes the canonical competition file layout, so every
+  existing tool runs on it unchanged.
+\item \textbf{Match the information sets.} Every candidate model receives
+  identical inputs (including the lagged-target features), so a win is
+  attributable to the architecture and nothing else.
+\item \textbf{Fix the decision rule in advance.} Ours, written before any
+  run: \emph{an architecture that cannot beat the GRU on a world designed
+  for its own inductive bias does not receive real-data GPU budget.}
+\end{enumerate}
+
+\section{Designing the world: one mechanism per inductive bias}
+
+The generator simulates the recovered construction of
+Chapter~\ref{ch:targets} --- per-symbol innovation series $u$, responders
+as forward SMAs (4/20/120) on two noisy venues, features as noisy
+descriptions of $u$'s realized path, planted at the same indices with the
+same timing signatures the atlas found. Into $u$'s conditional mean we
+plant four \emph{toggleable} mechanisms, each the cleanest possible target
+for one architectural bias:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+mechanism & construction & should be won by \\
+\midrule
+\code{rev} & intraday mean reversion:
+$\E[u_t] \propto -\,\mathrm{SMA}_{20}(u)_{t-1}$ & any causal temporal
+model \\
+\code{xd} & cross-day: yesterday's last-120 trend $\times$ a
+time-of-day gate ($+$ early, $-$ late) & TimeXer's endogenous-patch
+mechanism (Chapter~\ref{ch:attention}) \\
+\code{gate} & $\E[u_t] \propto \min(f_a, f_b)$ of two persistent
+observable factors (one idiosyncratic, one market-wide) & iTransformer's
+variate attention; also what the symbolic search found on real data \\
+\code{lead} & two features observe the next-4 innovations noisily
+(the \feat{37}/\feat{38} analog) & anything --- the linear-Gaussian floor \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The craft is in the details that make mechanisms \emph{forecastable but
+not trivial}: the gate factors follow slow AR(1) dynamics
+($\rho = 0.995$) so their state persists across the 20-step target window
+(otherwise the mechanism is unlearnable from time $t$); the cross-day
+mechanism requires \emph{composing} two inputs (yesterday's path and the
+clock) that no single feature exposes; the lead features carry calibrated
+noise so their optimal use is a shrinkage the model must learn.
+
+\section{The reference predictor: score as a fraction of knowable}
+
+For each mechanism we derive $\E[y_t \mid \mathcal F_t]$ in closed form
+(exactly for \code{rev}/\code{xd}/\code{lead}; a $\rho^k$-decay
+approximation for the min-gate, whose Jensen gap we accept and disclose).
+The generator writes these \emph{per-mechanism oracle columns} beside the
+data. Every model's score is then reported as a \textbf{fraction of the
+reference}, and --- the sharper instrument --- per-mechanism attribution
+is available by construction: re-generate the world with one mechanism's
+coefficient zeroed and difference the scores.
+
+\begin{keybox}[: triage reads, decided in advance]
+The bench's output is a (model $\times$ world) table read against three
+patterns. \emph{TimeXer $\approx$ GRU on the full world}: its bias is not
+realizable at this SNR and data volume $\to$ no GPU budget --- decision
+made for a laptop-hour. \emph{TimeXer $>$ GRU on full, $=$ on
+xd-zeroed}: the mechanism is real and TimeXer harvests it $\to$ the
+real-data question becomes ``how much \code{xd}-like structure does the
+real panel have?'', which the lag ablations already bound
+(Chapter~\ref{ch:featurepatterns}). \emph{Everything far below
+reference}: the harness or the calibration is broken --- fix before
+concluding anything about architectures.
+\end{keybox}
+
+\section{Validating the validator}
+
+A synthetic world is itself code that can be wrong, so it must pass its
+own forensics before grading anyone. Ours ships three self-checks: the
+generated responders reproduce the triangular ACF ramps at the correct
+cutoffs; the in-sample reference $R^2$ decomposes across mechanisms near
+the calibrated targets (measured: full $+0.044$ = rev $0.014$ + xd
+$0.007$ + gate $0.007$ + lead $0.011$, up to interaction terms); and the
+atlas pipeline of Chapter~\ref{ch:featforensics}, run on the synthetic
+world, recovers the planted feature taxonomy --- the forensic tools and
+the generator audit each other.
+
+\section{Beyond triage: the other uses}
+
+Once the world exists, it answers questions the real data cannot:
+
+\begin{itemize}
+\item \textbf{Procedure tuning with ground truth}: refit-lr cliffs
+  (Chapter~\ref{ch:online}), window sweeps, embargo sizes --- all
+  measurable against a \emph{known} optimum rather than a noisy
+  empirical best.
+\item \textbf{Power analysis}: how many days of validation are needed to
+  resolve a $+0.001$ true difference at this SNR? Simulate; the answer
+  disciplines real-data conclusions
+  (Chapter~\ref{ch:diagnostics}).
+\item \textbf{Failure rehearsal}: inject a regime break and watch each
+  family's static/online scores respond; learn the curve signatures
+  cheaply.
+\item \textbf{Leakage fire drills}: deliberately leak (center a window,
+  drop the embargo) and confirm your audit protocol catches it. An
+  audit that has never caught a planted leak is untested equipment.
+\end{itemize}
+
+\begin{drillbox}
+Write the minimal version for your own problem: (1) simulate the
+construction your forensics recovered, at matched SNR; (2) plant one
+mechanism per architecture you are weighing; (3) derive or approximate
+the reference predictor and \emph{calibrate} until its score sits near
+your real ceiling; (4) run your production harness unchanged. Budget a
+day. Compare that to the GPU-weeks of undirected architecture search it
+replaces --- and note that the discipline of step 3 will, by itself,
+teach you more about your problem's knowable fraction than most modeling
+weeks do.
+\end{drillbox}

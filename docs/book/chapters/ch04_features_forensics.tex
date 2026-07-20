@@ -1,0 +1,266 @@
+\chapter{Reverse-Engineering the Features}
+\label{ch:featforensics}
+
+Chapter~\ref{ch:targets} decoded the targets. This chapter turns the same
+instruments on the \emph{features} --- and adds two of our own: signal
+deconvolution and the lead--lag atlas. The output is a taxonomy of the 79
+anonymous columns that directly drove feature engineering
+(Chapter~\ref{ch:featurepatterns}), feature selection
+(Chapter~\ref{ch:selection}), and architecture configuration
+(Chapter~\ref{ch:attention}). Nothing in this chapter requires labels beyond
+what training data provides, and everything in it transfers to any anonymized
+tabular contest.
+
+\section{Recovering the underlying signal by deconvolution}
+\label{sec:deconv}
+
+The forensic result of Chapter~\ref{ch:targets} --- responders are forward
+SMAs of an underlying signal $s$ plus noise --- is an invitation. The SMA is
+a \emph{linear} operator; linear operators can be inverted. If we can
+reconstruct $\hat s$ from an observed responder path, we obtain the closest
+thing to ground truth this dataset offers: the per-step innovation sequence
+that everything else describes.
+
+\subsection{The ridge inverse}
+
+Stack one day's responder path into a vector $r \in \mathbb R^{T}$
+($T = 968$) and write the construction as $r = A s + \eta$, where
+$s \in \mathbb R^{T + w - 1}$ and $A$ is the banded forward-averaging
+operator, $A_{t,\,t+j} = 1/w$ for $j = 0,\dots,w-1$. Choose the shortest
+window available --- \resp{8}, $w=4$ --- because inverting a short average
+loses the least resolution. Exact inversion is ill-posed: $A$ has near-null
+spectral directions (the Dirichlet nulls of \S\ref{sec:fourier}) exactly
+where the additive noise $\eta$ lives. The standard cure is Tikhonov
+regularization:
+\begin{equation}
+\hat s \;=\; \big(A^\top A + \lambda I\big)^{-1} A^\top r
+\;=\; M_\lambda\, r .
+\label{eq:ridgedeconv}
+\end{equation}
+The matrix $M_\lambda$ depends only on $(T, w, \lambda)$: compute it
+\emph{once} ($968^3$ flops, a third of a second) and apply it to every
+(symbol, day) path as a single matrix multiplication. Deconvolving three
+thousand series costs one GEMM.
+
+\begin{lstlisting}
+def deconvolution_matrix(T, w, lam):
+    A = np.zeros((T, T + w - 1))
+    for t in range(T):
+        A[t, t:t+w] = 1.0 / w
+    return np.linalg.solve(A.T @ A + lam * np.eye(T + w - 1), A.T)
+
+M = deconvolution_matrix(968, 4, lam=0.5)   # once
+S_hat = R8 @ M.T                            # all series at once: (n, 971)
+\end{lstlisting}
+
+$\lambda$ trades resolution against noise amplification; because the
+spectral floor (\S\ref{sec:fourier}) told us noise exists but not its exact
+size, we validated the reconstruction rather than derived $\lambda$:
+
+\begin{jsbox}[: three sanity checks that must pass]
+Any deconvolution you build should be validated against the known
+construction before use. Ours (at $\lambda = 0.5$):
+(1) $\corr(\resp{8}_t,\ \hat s_{t+k})$ peaks at $0.85$ at $k{=}1$, inside
+the responder's own window --- the inverse is aligned and strong;
+(2) \resp{6} correlates with $\hat s$ at $\approx 0.37$ averaged over
+$k \in [1,20]$ (its construction window) and $\approx 0.01$ over
+$k \in [-20, 0]$ --- the forward shift of \S\ref{sec:shift}, reproduced
+numerically to the step;
+(3) responders 0/1/2 (the $B{-}A$ differences) correlate with $\hat s$ at
+$\approx 0$ --- differencing cancels the common signal, exactly as the
+construction predicts. Three independent predictions of the theory, three
+confirmations. Only then did we let $\hat s$ anchor everything that
+follows.
+\end{jsbox}
+
+A deconvolution-free cross-check is also worth carrying: the first
+difference $\Delta r^{(4)}_t \propto s_{t+4} - s_{t}$ contains the same
+innovations without any matrix inversion (at the cost of mixing two time
+points). Where the two disagree, trust neither.
+
+\section{The lead--lag atlas}
+\label{sec:atlas}
+
+With $\hat s$ in hand, ask of every feature $x$ the only question that
+matters: \emph{when does this feature know about the signal?} Compute, per
+(symbol, day) series and then averaged,
+\[
+\ell_x(k) \;=\; \corr\big(x_t,\ \hat s_{t+k}\big),
+\qquad k \in [-48, +48],
+\]
+via the same FFT machinery as \S\ref{sec:acf} (never by looping over lags).
+The resulting curve --- we call the collection over all features the
+\textbf{atlas} --- is the feature's timing signature. Summarize each curve
+by three numbers:
+
+\begin{itemize}
+\item \textbf{alpha score}: mean of $\ell_x(k)$ over $k \in [+1, +20]$ ---
+  correlation with the \emph{future} signal inside the target's window.
+  This is, by construction, the part of the feature that can earn score.
+  (Strict variant: $k \in [+4, +20]$, excluding lags that ridge smearing
+  can contaminate --- always define a smear-proof band when your reference
+  signal is itself reconstructed.)
+\item \textbf{nowcast score}: mean over $k \in [-20, 0]$ --- correlation
+  with the \emph{realized} path. Descriptive, not predictive.
+\item \textbf{peak lag and peak value}: where the curve is largest, and how
+  large.
+\end{itemize}
+
+\subsection{What the atlas found}
+
+Running this over all 79 features on an 80-day window
+(\code{artifacts/feature\_atlas/}) produced a taxonomy that no univariate
+target-correlation screen could have drawn:
+
+\begin{center}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+group & members (exemplars) & signature & value \\
+\midrule
+\textbf{lead} & \feat{37}, \feat{38} & alpha $-0.067$, peak at $k{=}{+}3$;
+also the largest raw target correlation ($-0.16$) & genuine foresight;
+prime model inputs \\[2pt]
+\textbf{pure lead} & \feat{18}, \feat{65} & alpha $-0.04$, nowcast
+$\approx 0$ & foresight with no descriptive component \\[2pt]
+\textbf{reversal block} & \feat{39}--\feat{60} (15 cols; strongest
+\feat{60}: $-0.45$ at $k{=}{-}3$) & strong \emph{negative} nowcast at
+$k \in [-4,-1]$, small \emph{positive} alpha & encode short-horizon
+mean-reversion \\[2pt]
+\textbf{slow SMA-like} & \feat{12}, \feat{67}, \feat{70} & triangular ACF
+ramp, cutoff $\approx 160$, linearity $R^2 \approx 0.98$ & are themselves
+moving averages $\Rightarrow$ deconvolvable (\S\ref{sec:featdeconv}) \\[2pt]
+\textbf{market-wide} & \feat{04}--\feat{07} & $\approx 93\%$ of variance
+common across symbols & market factors; natural gate inputs \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Read the reversal block's signature carefully, because it is the kind of
+economic structure forensics can surface: those features are \emph{high}
+when the just-realized signal was \emph{negative} (nowcast $< 0$), and the
+future signal is then mildly \emph{positive} (alpha $> 0$). That is a
+mean-reversion signal, pre-packaged by the host. A univariate screen sees
+only the modest net target correlation and ranks these columns middling;
+the atlas sees \emph{why} they correlate and, more importantly, that their
+predictive component has different timing from their descriptive one.
+
+\begin{warnbox}[: the univariate screen conflates lead and nowcast]
+$\corr(x_t, y_t)$ mixes two mechanisms: the feature describing the realized
+window (worthless at prediction time beyond what other features already
+say) and the feature leading the future window (the entire game). Two
+features with identical target correlation can have opposite value. Rank
+features by the alpha band of their lead--lag curve, not by raw target
+correlation --- and when you later seed feature selection or attention
+channels (Chapters~\ref{ch:selection}, \ref{ch:attention}), seed from the
+alpha ranking.
+\end{warnbox}
+
+\subsection{The stability gate}
+
+Structure is only usable if it persists to test time. Our rule ---
+\textbf{no atlas finding is load-bearing until reproduced on a distant
+window} --- gets its teeth from a pair of measurements:
+
+\begin{itemize}
+\item Atlas alpha ranking, computed independently on days 900--980 and
+  days 1500--1580 (600 days apart): Spearman rank correlation
+  \textbf{$+0.97$}, sign agreement 97\% among features with
+  $|\text{alpha}| > 0.005$. This structure is a stationary property of the
+  data-generating process. Build on it.
+\item Symbol clusters from responder co-movement, same two windows:
+  adjusted Rand index \textbf{$-0.07$} --- chance agreement. The clusters
+  are real within a window and meaningless across windows. Do not build on
+  them. (We killed a planned per-cluster-model architecture on this
+  number alone; Chapter~\ref{ch:negative}.)
+\end{itemize}
+
+Same dataset, same methodology, opposite verdicts --- distinguished only by
+the stability check. If you adopt one habit from this chapter, adopt this
+one.
+
+\section{Features that are themselves smoothed}
+\label{sec:featdeconv}
+
+The ACF fingerprint reader of \S\ref{sec:acf}, pointed at features rather
+than targets, found that \feat{12}, \feat{67}, and \feat{70} carry the
+triangular ramp with cutoff $\approx 160$: \emph{these features arrive
+pre-smoothed}, roughly SMA-160 of some underlying series the host did not
+otherwise expose. Two consequences:
+
+\begin{enumerate}
+\item Their \emph{recent increments} --- plausibly the informative part ---
+  are attenuated by a factor of $\sim 160$ relative to their level. A model
+  sees mostly stale context.
+\item The remedy is the anti-smoothing toolkit: difference them at short
+  lags, or ridge-deconvolve them exactly as in \S\ref{sec:deconv} with
+  $w = 160$. Chapter~\ref{ch:smoothing} develops the general theory of when
+  to smooth and when to un-smooth; this trio is its motivating example.
+\end{enumerate}
+
+The general forensic habit: \textbf{every tool you point at targets, point
+at features too}. Targets are constructed; features are constructed; the
+same fingerprints appear in both.
+
+\section{Cross-sectional and structural profiling}
+
+Three cheaper diagnostics complete the atlas, each a column of the summary
+table our profiler emits:
+
+\begin{itemize}
+\item \textbf{Market share}: the fraction of a feature's variance explained
+  by its per-(date, time) cross-symbol mean. Near 1 $\Rightarrow$ the
+  feature is a market-level factor delivered to every symbol
+  (\feat{04}--\feat{07} at $0.93$); near 0 $\Rightarrow$ idiosyncratic.
+  Determines whether market-average engineering (Chapter
+  \ref{ch:featurepatterns}) or cross-sectional ranking will do anything.
+\item \textbf{Cross-day continuity}: correlation between a feature's value
+  at the last timestamp of day $d$ and the first of day $d{+}1$. High
+  $\Rightarrow$ a continuous process (levels, slow states); near zero
+  $\Rightarrow$ the feature resets daily (intraday-scoped quantities). This
+  decides whether cross-midnight rolling windows are meaningful for that
+  feature or an artifact.
+\item \textbf{Intraday profile share}: variance of the mean time-of-day
+  curve relative to total variance. High values flag features that are
+  mostly a deterministic function of the clock --- and remind you that
+  \emph{time-of-day itself} is a first-class feature (it earned a top-five
+  importance slot in every tree model we fit).
+\end{itemize}
+
+\section{The atlas as infrastructure}
+
+We built the atlas as a research artifact; it became infrastructure. Its
+consumers by the end of the campaign:
+
+\begin{enumerate}
+\item \textbf{Feature engineering}: the reversal block and the slow-SMA trio
+  each spawned engineered families (Chapter~\ref{ch:featurepatterns}).
+\item \textbf{Feature-selection seeding}: the symbolic-combination search of
+  Chapter~\ref{ch:selection} improved measurably ($+0.00039 \to +0.00052$
+  over baseline) when its candidate pool was seeded with atlas lead and
+  reversal features instead of pure importance survivors.
+\item \textbf{Attention-channel selection}: the inverted-attention model of
+  Chapter~\ref{ch:attention} attends over a subset of variates; we feed it
+  the atlas alpha set rather than all 130 columns.
+\item \textbf{Synthetic benchmarking}: the generator of
+  Chapter~\ref{ch:synthetic} plants lead features, a reversal block, slow
+  SMAs, and market factors \emph{at the same indices with the same
+  signatures}, so that architecture triage runs on a world with the real
+  problem's anatomy.
+\end{enumerate}
+
+That is the quiet lesson of Part~II: forensics is not a warm-up act before
+the real work. Done properly, it \emph{is} the real work, and the models
+downstream are consumers of its output.
+
+\begin{drillbox}
+Build a miniature atlas for any panel dataset: (1) reconstruct or choose a
+reference signal (a target, or its deconvolution if it is smoothed);
+(2) compute FFT lead--lag curves for every feature; (3) summarize into
+alpha/nowcast/peak columns; (4) recompute on a second window and report the
+rank correlation. Total code: under 200 lines (ours is
+\code{scripts/profile\_features.py}). Then answer: which three features
+would you feed to a model restricted to three inputs? The atlas answer will
+differ from the univariate-correlation answer --- and now you know which one
+to trust.
+\end{drillbox}

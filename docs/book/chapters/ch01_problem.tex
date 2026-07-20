@@ -1,0 +1,250 @@
+\chapter{What Kind of Problem Is This?}
+\label{ch:problem}
+
+Every modeling decision you will make --- how much data to train on, which
+architecture to reach for, whether a $+0.0003$ improvement is real ---
+depends on facts about the \emph{problem class} that are knowable before you
+fit a single model. This chapter establishes those facts for the tabular
+time-series genre, using the Jane Street competition as the running specimen.
+
+\section{Anatomy of a modern market-forecasting competition}
+
+The Jane Street \emph{Real-Time Market Data Forecasting} challenge (2024--25)
+is a nearly perfect exemplar of the genre, so it is worth dissecting its
+structure piece by piece. You will meet the same skeleton, with different
+skin, in DRW's crypto challenge, Optiver's contests, and most proprietary
+research problems inside quantitative trading firms.
+
+\subsection{The panel}
+
+The data is a \emph{panel}: observations indexed by three coordinates,
+\[
+(\text{\code{symbol\_id}},\ \text{\code{date\_id}},\ \text{\code{time\_id}})
+\;\in\; \{0,\dots,38\} \times \{0,\dots,1698\} \times \{0,\dots,967\}.
+\]
+Roughly forty instruments, about seventeen hundred trading days, and 968
+intra-day timestamps per day (after day 677, when the day length stabilizes;
+before that the panel is ragged --- a detail that will matter in
+Chapter~\ref{ch:preprocessing}). The full table is about 47 million rows.
+
+Panels are richer than single time series in a specific, exploitable way:
+at every timestamp you observe a \emph{cross-section} of symbols. Anything
+common to the cross-section (``the market moved'') can be separated from
+what is idiosyncratic to a symbol. Chapter~\ref{ch:featurepatterns} builds
+features from exactly this decomposition; here it is enough to note that the
+panel structure is not incidental --- it is one of the two or three main
+places where signal hides.
+
+\subsection{The features}
+
+Each row carries 79 anonymized features, \feat{00} through \feat{78}, plus a
+per-row importance weight. Anonymization is standard practice --- the host
+cannot reveal what the columns mean --- and it sets up the central epistemic
+game of the genre: \textbf{the data-generating process is hidden but not
+unknowable}. The features have autocorrelation structures, cross-sectional
+correlation patterns, tag metadata, and timing relationships with the target,
+all of which survive anonymization. Part~II of this book is about
+interrogating them.
+
+A metadata file, \code{features.csv}, assigns each feature a subset of
+seventeen boolean tags. Tags are the host whispering hints: features sharing
+\code{tag\_12} tend to be transformations of one underlying quantity.
+We will use tag structure repeatedly.
+
+\subsection{The targets}
+
+Nine anonymized \emph{responders}, \resp{0} through \resp{8}, of which
+\resp{6} is the competition target. The others are given during training but
+\emph{not} at inference time --- except through a lag mechanism described
+below. Keep this asymmetry in mind: auxiliary series that exist in training
+but not at test time are not useless; they are \emph{free auxiliary
+supervision} (Chapter~\ref{ch:featurepatterns}) and, lagged, they are
+features.
+
+\subsection{The protocol}
+
+This competition scores you through a \emph{streaming gateway}: your model
+receives the feature rows for one \code{time\_id} (all symbols at once), must
+return predictions before seeing the next timestamp, and --- crucially ---
+receives the \emph{previous day's complete responder table} at the start of
+each new day (the ``lags'' file). The protocol encodes the real-world
+information set of a live trading system:
+
+\begin{itemize}
+\item Within a day, you never observe your target. No within-day
+  autoregression on the label is possible.
+\item Across days, you observe the target with a one-day delay, at full
+  intra-day resolution. Yesterday's realized path is the freshest label
+  information you will ever have.
+\item Features arrive in real time and may be used contemporaneously.
+\end{itemize}
+
+We call this the \emph{deployment information set}, and
+Chapter~\ref{ch:leakage} elevates ``respect the deployment information set''
+into the central commandment of the genre. Architecturally, it is also why
+models that treat \emph{yesterday's target path} and \emph{today's streaming
+features} as two different kinds of input (Chapter~\ref{ch:attention}, the
+TimeXer design) map so naturally onto this problem.
+
+\section{The noise ceiling: the number that rules everything}
+\label{sec:noiseceiling}
+
+Here is the most important table in this book. It is the final private
+leaderboard of the Jane Street competition --- the scores achieved on months
+of genuinely unseen future data:
+
+\begin{center}
+\begin{tabular}{@{}rlr@{}}
+\toprule
+place & team & private weighted $R^2$ \\
+\midrule
+1 & ms capital & $0.01389$ \\
+2 & Patrick Yam & $0.01327$ \\
+3 & (undisclosed) & $0.01316$ \\
+4 & Haoze Hou & $0.01168$ \\
+8 & Evgeniia Grigoreva & $0.01043$ \\
+19 & John Payne & $0.00930$ \\
+49 & --- & $0.00813$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Read it slowly. The best result achieved by roughly 2{,}800 competing teams,
+many of them professionals with serious compute, was to explain
+\textbf{1.39 percent} of the target's variance. The difference between a gold
+medal and 49th place was about half a percentage point of $R^2$. And --- as
+we will derive in Chapter~\ref{ch:targets} --- this is not because everyone
+was bad at the problem. The target is constructed (a forward moving average
+of near-white innovations) so that most of its variance is \emph{physically
+unpredictable} from the available information. There is a ceiling, the
+ceiling is low, and everybody is compressed underneath it.
+
+\begin{keybox}[: estimate the ceiling first]
+Before modeling, estimate how much of the target is knowable at all. Use the
+leaderboard of similar past competitions, the autocorrelation structure of
+the target (Chapter~\ref{ch:targets}), or an explicit synthetic replica of
+the data-generating process (Chapter~\ref{ch:synthetic}). Every downstream
+judgment --- what improvement is plausible, what improvement is
+\emph{suspicious} --- calibrates against this number.
+\end{keybox}
+
+\subsection{Consequence 1: variance reduction beats capacity}
+
+Suppose the predictable component of the target is a function $f$ with
+$\Var(f) \approx 0.014 \cdot \Var(y)$, and your model produces
+$\hat f = f + \varepsilon$ where $\varepsilon$ is estimation error ---
+error from finite data, noisy optimization, unlucky seeds. Your achieved
+score is roughly
+\[
+R^2 \;\approx\; \frac{\Var(f) - \E\|\varepsilon\|^2_{\text{aligned}}}{\Var(y)},
+\]
+that is, \emph{estimation variance subtracts directly from a signal budget
+that was tiny to begin with}. When the budget is 60\% of variance (image
+classification), estimation noise is a rounding error. When the budget is
+1.4\%, estimation noise is often \emph{larger than the signal}, and the
+highest-return activities are the ones that shrink $\varepsilon$: averaging
+over seeds, bagging over time windows, ensembling decorrelated models,
+online refitting toward the current regime.
+
+Our campaign measured this directly. The best single model (an LSTM with
+auxiliary heads, Chapter~\ref{ch:rnn}) scored $+0.0092$; averaging it with
+two other models --- one of them a gradient-boosted tree scoring only
+$+0.0068$ --- produced $+0.0104$. Meanwhile, doubling the LSTM's hidden
+width, a capacity move that would matter enormously in a high-SNR domain,
+changed the score by less than seed noise. \emph{At low SNR, the ensemble is
+the model.}
+
+\subsection{Consequence 2: your validation score is a random variable}
+
+The same arithmetic applies to evaluation. A validation set of 100 trading
+days ($\sim$3.7 million rows, but with heavy temporal correlation --- the
+effective sample size is closer to the number of days than the number of
+rows) measures a true score of $\sim 0.01$ with sampling noise on the order
+of a few $10^{-4}$. Two consequences:
+
+\begin{itemize}
+\item A measured difference of $+0.0002$ between two configurations is,
+  by itself, \emph{nothing}. Demand replication: multiple seeds, multiple
+  validation windows, or both.
+\item Model selection over many candidates on one validation window is
+  itself an overfitting process. If you compare thirty ideas on the same
+  100-day tail, the winner's margin is partly selection bias. Hold back a
+  second window for the finalists (Chapter~\ref{ch:validation}).
+\end{itemize}
+
+\begin{jsbox}[: seed noise vs.\ claimed effects]
+In our runs, retraining the same GRU with a different random seed moved the
+validation weighted $R^2$ by $\pm 0.0003$ to $\pm 0.0008$. Nearly every
+``improvement'' under $0.0005$ that we chased down was seed noise wearing a
+costume. The discipline that survived: any effect claimed at under
+$0.001$ must show up in at least two seeds \emph{and} two validation
+windows before it earns a line in the technical report.
+\end{jsbox}
+
+\subsection{Consequence 3: overfitting is the default outcome, not a risk}
+
+A model with a few hundred thousand parameters, trained on a target whose
+predictable share is 1.4\%, has abundant capacity to memorize noise patterns
+that \emph{look} like that 1.4\%. In-sample $R^2$ of 0.05--0.30 with
+out-of-sample $R^2$ of 0.005 is not a pathology; it is the equilibrium state
+of this genre. All of Part~III --- leakage discipline, purged validation,
+frozen preprocessing statistics --- exists because at these SNRs the standard
+machine-learning failure modes are not occasional accidents but the
+\emph{default trajectory} of any project that does not actively resist them.
+
+\section{Drift: the second law of the genre}
+\label{sec:drift}
+
+Financial panels are not stationary. The relationship between features and
+target decays over time --- regimes change, market participants adapt, the
+host's data pipeline evolves. Our cleanest measurement of this
+(Chapter~\ref{ch:online} has the full story): a GRU trained on 800 days of
+history scored \emph{worse} on the recent validation tail ($+0.0077$) than
+the same architecture trained on the most recent 280 days ($+0.0089$).
+More data made the model worse, because the older data taught relationships
+that no longer hold. The static score of old-data models on recent days is
+frequently \emph{negative} --- worse than predicting zero.
+
+Drift has two practical faces:
+
+\begin{enumerate}
+\item \textbf{Recency windowing.} There is an optimal training window ---
+  long enough to estimate, short enough to be current. Sweep it
+  (Chapter~\ref{ch:online}); in our problem the knee was around 300--400
+  days.
+\item \textbf{Online adaptation.} If the protocol delivers labels with a
+  delay (here: one day), a model that takes a small gradient step on each
+  day's newly revealed labels tracks the drifting relationship. This single
+  mechanism was worth more than any architectural choice we made:
+  $+0.003$ to $+0.005$ weighted $R^2$, on every recurrent model, in every
+  configuration we tested.
+\end{enumerate}
+
+\section{The mindset}
+
+Let us compress the chapter into an operating posture. You are entering a
+domain where:
+
+\begin{itemize}
+\item the winner explains 1.4\% of variance, so \textbf{humility is
+  quantitative}: any result that looks much better than the ceiling is a bug
+  (almost always leakage, Chapter~\ref{ch:leakage});
+\item measurement noise rivals effect sizes, so \textbf{replication is not
+  optional};
+\item the world drifts, so \textbf{recency and adaptation beat volume};
+\item signal is scarce but structure is everywhere, so \textbf{forensics
+  (Part II) pays better than architecture search (Part V)};
+\item and estimation variance is the dominant error term, so
+  \textbf{boring averaging wins} (Chapter~\ref{ch:ensembling}).
+\end{itemize}
+
+The rest of the book is the long version of this list.
+
+\begin{drillbox}
+Before reading further, take any time-series competition you have access to
+and, without fitting a model: (1) find the metric's zero-point --- what score
+does predicting all zeros achieve? (2) find the winner's score and express it
+as a fraction of the theoretical maximum; (3) compute the target's lag-1
+autocorrelation. These three numbers place the competition in the genre's
+coordinate system and predict most of what will and won't work.
+\end{drillbox}

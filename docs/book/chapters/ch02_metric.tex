@@ -1,0 +1,237 @@
+\chapter{The Metric Under the Microscope}
+\label{ch:metric}
+
+Competitions are optimization problems, and the objective is the metric ---
+not accuracy in the abstract, not your intuition of quality, but one specific
+formula evaluated on one specific table. Small print in that formula changes
+what models you should build, what loss you should train with, and even what
+post-processing is worth doing. This chapter dissects the Jane Street metric
+in detail and extracts the general lessons.
+
+\section{The zero-mean weighted \texorpdfstring{$R^2$}{R2}}
+
+The competition scores predictions $\hat y_i$ against realized values $y_i$
+with per-row weights $w_i$:
+\begin{equation}
+\Rw \;=\; 1 - \frac{\sum_i w_i\,(y_i - \hat y_i)^2}{\sum_i w_i\, y_i^2}.
+\label{eq:wr2}
+\end{equation}
+
+Three deliberate details distinguish this from the textbook $R^2$, and each
+one carries a lesson.
+
+\subsection{The denominator is \emph{not} centered}
+
+The usual coefficient of determination compares your errors to those of the
+sample-mean predictor: denominator $\sum (y_i - \bar y)^2$. Here the
+denominator is $\sum w_i y_i^2$ --- the comparison point is the
+\textbf{all-zeros predictor}. Consequences:
+
+\begin{itemize}
+\item \textbf{Zero is the origin of the score.} Predicting $\hat y \equiv 0$
+  scores exactly $\Rw = 0$. Any model must beat ``do nothing.'' In trading
+  terms: the benchmark is staying flat, which is the honest benchmark for a
+  signal that drives position-taking.
+\item \textbf{Predicting the historical mean can score \emph{negative}.}
+  If the target's mean in your training window differs from zero (drift!),
+  carrying that mean forward adds $(\bar y_{\text{train}})^2$ to your error
+  with no compensation in the denominator. At our SNR, even tiny biases
+  matter: a constant offset $b$ costs approximately $b^2 / \overline{y^2}$
+  of score. With $\overline{y^2} \approx 0.6$ and target scores of $0.01$,
+  a bias of $b = 0.05$ burns $0.004$ --- nearly half a good model's entire
+  score. \emph{Check your prediction mean.}
+\item \textbf{The metric rewards shrinkage.} Decompose the score for a
+  prediction $\hat y = \alpha f$, where $f$ is your (imperfect) signal
+  estimate and $\alpha$ a scale you control. The optimal $\alpha$ is the
+  regression coefficient of $y$ on $f$:
+  $\alpha^\star = \Cov_w(y, f)/\Var_w(f)$, and \emph{underconfident
+  predictions lose less than overconfident ones}. When a model chronically
+  overpredicts magnitudes (common after training on MSE with outliers),
+  a global shrink toward zero, fit on validation, is free money. Our
+  pipeline clips final predictions to $[-5, 5]$ for the same tail-risk
+  reason: one insane prediction on a high-weight row can erase a day of
+  signal.
+\end{itemize}
+
+\subsection{The weights are part of the objective}
+
+Every row carries a weight $w_i$ (in this competition, plausibly
+proportional to a liquidity or dollar-impact measure). The metric is a
+weighted sum, which means \textbf{training must be weighted identically}:
+the loss on a training example must be multiplied by the same $w_i$ used at
+evaluation. This sounds obvious; in practice it is one of the top-five most
+common silent errors in public notebooks. Symptoms include: a model that
+looks fine on unweighted MSE but underperforms on the leaderboard, because
+it spends capacity on low-weight rows.
+
+Two secondary effects of weighting deserve attention:
+
+\begin{itemize}
+\item \textbf{Effective sample size shrinks.} With weights of varying
+  magnitude, the variance-reducing power of $n$ rows is
+  $n_{\text{eff}} = (\sum w_i)^2 / \sum w_i^2 \le n$. Heavy-tailed weights
+  concentrate the metric on fewer effective rows, making validation noisier
+  than row counts suggest --- one more reason for the replication discipline
+  of Chapter~\ref{ch:problem}.
+\item \textbf{Weighted early stopping.} If your training framework's
+  early-stopping metric ignores the weights (XGBoost's default RMSE on an
+  unweighted eval set, for instance), you are selecting the stopping point
+  for the wrong objective. Pass the weights to the eval set too
+  (\code{sample\_weight\_eval\_set} in the sklearn wrapper).
+\end{itemize}
+
+\subsection{It is a squared-error metric --- with everything that implies}
+
+$\Rw$ is affine in weighted MSE, so the Bayes-optimal prediction is the
+conditional mean $\E[y \mid \text{features}]$, not the median, not a
+quantile, and not a direction. Squared error punishes large misses
+quadratically, which at heavy-tailed targets means \textbf{tail rows
+dominate gradients}. Practical mitigations, all used in our campaign or by
+the solutions we studied:
+
+\begin{itemize}
+\item \textbf{Clip the target's influence}, either by clipping predictions
+  (we clip to $[-5,5]$) or by gradient clipping during training
+  (global-norm 1.0 on all neural models).
+\item \textbf{Robustify the inputs}, not the loss: quantile-clip features at
+  fitted $[0.1\%, 99.9\%]$ bounds (Chapter~\ref{ch:preprocessing}) so
+  extreme feature rows cannot generate extreme predictions.
+\item \textbf{Consider a correlation term in the training loss.} The DRW
+  crypto winner trained his MLP on
+  $0.6\cdot\mathrm{MSE} + 0.4\cdot(1-\rho_{\mathrm{Pearson}})$ even though
+  the competition metric was correlation-adjacent. His stated reason
+  generalizes: at low SNR, pure MSE gradients are dominated by irreducible
+  noise, and a correlation term keeps optimization pointed at
+  \emph{co-movement} --- the part you can actually influence. When the
+  competition metric is exactly $\Rw$, training directly on
+  $1-\Rw$ per batch (as our \code{WeightedR2Loss} does) is the cleanest
+  choice; the denominator per batch also acts as a natural per-day
+  normalization when each batch is one trading day.
+\end{itemize}
+
+\section{Training loss versus evaluation metric}
+
+A recurring genre decision: do you train on the metric itself, or on a proxy?
+Our answer, empirical and consistent with both reference solutions:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lXX@{}}
+\toprule
+model family & train loss & rationale \\
+\midrule
+gradient-boosted trees & plain weighted MSE & tree boosting needs pointwise
+gradients/hessians; the $\Rw$ affine shift does not change split decisions;
+weighting enters via sample weights. \\
+neural sequence models & $1-\Rw$ per day-batch & each batch is one full
+trading day, so the batch denominator $\sum w y^2$ is a stable day-level
+normalizer; the loss is then scale-calibrated across days with different
+volatility. \\
+MLP (DRW winner) & $0.6\,\mathrm{MSE} + 0.4\,(1-\rho)$ & correlation term
+stabilizes low-SNR optimization; MSE term keeps calibration. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{keybox}[: batch = one day makes the metric trainable]
+The per-day batch convention (Chapter~\ref{ch:rnn}) has a quiet side effect:
+it makes $1-\Rw$ a well-behaved training loss. Computed over one day's rows,
+the denominator is a meaningful quantity (that day's weighted target energy),
+and each day contributes one loss value of comparable scale regardless of
+that day's volatility. Random-row batches would make the batch-$\Rw$
+denominator noisy and the loss erratic. Metric-aware batching is an
+underrated trick.
+\end{keybox}
+
+\section{What ``good'' looks like on this metric: a calibration table}
+
+Because almost nobody has intuitions for scores of $0.01$, it is worth
+building a mental ladder. All numbers are weighted $R^2$ on our 100-day
+validation tail unless stated:
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+predictor & $\Rw$ \\
+\midrule
+all zeros & $0.0000$ \\
+carry forward training mean & $\approx -0.001$ \\
+plain MLP on all features & $-0.0026$ \\
+10-feature linear probe & $+0.002$ to $+0.004$ \\
+well-tuned XGBoost, 200 recent days & $+0.0059$ \\
+XGBoost + engineered/symbolic features & $+0.0064$ \\
+GRU with aux heads, static & $+0.0076$ \\
+same, with daily online refit & $+0.0089$ \\
+LSTM with aux heads, online, tuned refit LR & $+0.0092$ \\
+3-model decorrelated ensemble & $+0.0104$ \\
+8th place (private LB, different data) & $+0.0104$ \\
+1st place (private LB) & $+0.0139$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two readings of this ladder are worth internalizing. First, the \emph{entire
+competitive range} --- from ``did something sensible'' to ``best on Earth''
+--- spans about $0.012$. Steps you might consider negligible elsewhere
+($+0.0005$) are meaningful moves here. Second, the ladder's big steps are
+not architectural: engineered features ($+0.0005$), online refit
+($+0.0013$), ensembling ($+0.0012$). The architecture rows differ by less
+than the operational rows. This pattern --- \textbf{operations beat
+architecture} --- recurs in every low-SNR competition we studied.
+
+\begin{warnbox}[: scores that are too good]
+On this metric, at this SNR, a validation score above $\sim 0.03$ is not a
+breakthrough; it is a leak until proven otherwise. The fastest check:
+shift the suspect feature set forward by one timestep and re-score. Genuine
+signal degrades gracefully; leaked signal collapses. (The full leakage
+audit protocol is in Chapter~\ref{ch:leakage}.) In our campaign this reflex
+caught, among others, a rolling statistic computed with a centered window ---
+a one-character bug (\code{center=True}) worth a fake $+0.02$.
+\end{warnbox}
+
+\section{Metric-driven post-processing}
+
+Because the metric is known in closed form, some post-processing is
+mathematically justified rather than superstitious:
+
+\begin{itemize}
+\item \textbf{Global rescale.} Fit $\alpha^\star$ on a held-out window
+  as above. Values persistently below $1$ indicate overconfident
+  magnitudes --- common for models trained with insufficient
+  regularization.
+\item \textbf{Clipping.} $\hat y \mapsto \mathrm{clip}(\hat y, -c, c)$ with
+  $c$ set from the target's realized range (we use $c=5$ on a target whose
+  bulk lies within $\pm 3$). The expected cost of clipping true extremes is
+  negligible; the protection against pathological rows is not.
+\item \textbf{Per-day or per-symbol debiasing --- handle with care.}
+  Subtracting each day's running prediction mean sounds attractive
+  (the metric's zero-origin punishes bias) but at streaming inference you
+  only know the running mean \emph{so far}, and early-day debiasing adds
+  variance. We measured no net gain and dropped it.
+\end{itemize}
+
+\section{General lessons for any competition}
+
+\begin{enumerate}
+\item Read the metric's formula, not its name. ``$R^2$'' here meant
+  \emph{zero-mean weighted} $R^2$, and each qualifier changed behavior.
+\item Locate the zero point (what does a trivial predictor score?) and the
+  ceiling (what did winners of similar contests score?). All progress is
+  measured between those posts.
+\item Push the metric into training: weights into the loss, weights into
+  early stopping, the metric itself as the loss where batch structure
+  allows.
+\item Derive what post-processing the metric legitimizes (shrinkage,
+  clipping, debiasing) and validate each one; do not cargo-cult them.
+\item Recompute the metric yourself. Never trust a framework's default
+  ``r2'' to be the competition's formula --- ours is eleven characters
+  different and those characters are worth points.
+\end{enumerate}
+
+\begin{drillbox}
+Derive the optimal shrinkage $\alpha^\star$ for the zero-mean weighted
+$R^2$: with $\hat y = \alpha f$, expand \eqref{eq:wr2} and minimize over
+$\alpha$. Show that using $\alpha=1$ when the true optimum is $\alpha^\star$
+costs exactly $\Var_w(f)\,(1-\alpha^\star)^2 / \sum_i w_i y_i^2$ of score.
+Then compute $\alpha^\star$ for your current model's validation predictions.
+If it is far from $1$, you have found free score.
+\end{drillbox}

@@ -1,0 +1,129 @@
+\chapter{Tool Reference: The Companion Repository}
+\label{app:tools}
+
+Every measurement in this book is reproducible from the companion
+repository. This appendix maps the book's concepts to the code that
+implements them.
+
+\section*{Package layout}
+
+\begin{lstlisting}
+src/janestreet/
+  config.py            # one Cfg dataclass: paths, columns, defaults
+  data/
+    ingest.py          # lazy scans of the partitioned parquet
+    features.py        # FeatureBuilder: engineered blocks, lag joins,
+                       #   synthetic + realized (nowcast) aux targets
+    scaler.py          # QuantileClipper + OnlineStandardizer (frozen/online)
+    dataset.py         # (symbols, T, features) day-tensor construction
+  models/              # registry: xgb, mlp, gru/lstm(_modelr),
+                       #   transformer, sig_transformer, itransformer,
+                       #   timexer  -- one BaseModel interface:
+                       #   fit / predict / update
+  theory/signatures.py # path-signature machinery (kept as theory)
+  training/            # WeightedR2Loss, metrics, TimeSeriesDateSplit
+  pipeline.py          # FullPipeline + run_cv: the walk-forward,
+                       #   online-refit evaluation contract
+\end{lstlisting}
+
+\section*{Concept-to-script map}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.42\textwidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+book concept & repository entry point \\
+\midrule
+forensic atlas: ACF fingerprints, deconvolution, lead--lag curves,
+stability windows (Ch.~\ref{ch:targets}--\ref{ch:featforensics}) &
+\code{scripts/profile\_features.py} $\to$
+\code{artifacts/feature\_atlas/\{atlas.json, ATLAS.md, curves.npz\}} \\
+\addlinespace[2pt]
+precompute-once memmap pool, frozen preprocessing boundary
+(Ch.~\ref{ch:preprocessing}) & \code{scripts/precompute\_dataset.py}
+(\code{-{}-train-until} sets the leakage boundary;
+\code{-{}-lagged-responders} adds the lag joins) \\
+\addlinespace[2pt]
+DRW-style selection: medoids, SHAP-consistency, symbolic combos, tail
+ablation (Ch.~\ref{ch:selection}) & \code{scripts/drw\_feature\_lab.py}
+(\code{-{}-extra-core} injects forensic seeds; stages A--D cached and
+resumable) \\
+\addlinespace[2pt]
+lag-difference ablation; cluster/identity ablations
+(Ch.~\ref{ch:featurepatterns}) &
+\code{scripts/ablate\_responder\_signal.py},
+\code{scripts/ablate\_symbol\_identity.py},
+\code{scripts/cluster\_symbols.py} \\
+\addlinespace[2pt]
+walk-forward CV with online refit; static/online pair
+(Ch.~\ref{ch:validation}, \ref{ch:online}) & \code{uv run js cv
+-{}-model <name> ...} (CLI over \code{pipeline.run\_cv});
+refit-lr and window sweeps: \code{scripts/sweep\_refit\_lr.py},
+\code{scripts/sweep\_window\_length.py} \\
+\addlinespace[2pt]
+nowcast aux heads (Ch.~\ref{ch:featurepatterns}) & \code{js cv
+-{}-realized-aux -{}-aux-targets ...} with \code{num\_aux} raised in
+model kwargs \\
+\addlinespace[2pt]
+temporal bagging + blending (Ch.~\ref{ch:ensembling}) & one experiment
+= one YAML: \code{scripts/run\_experiment.py} over members
+(model $\times$ seed $\times$ date-resample) $\to$
+\code{scripts/ensemble\_blend.py} (simple average + held-out convex
+blend for comparison); \code{scripts/train\_from\_memmap.py} trains a
+single member from the pool \\
+\addlinespace[2pt]
+synthetic triage world with planted mechanisms and reference ceilings
+(Ch.~\ref{ch:synthetic}) & \code{scripts/synth\_bench.py gen} (world in
+canonical layout + \code{oracle.parquet}) and \code{... run} (model zoo
+under the production protocol, scores as fraction-of-reference) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{Ledgers}
+
+The campaign's institutional memory, in three documents that this book
+repeatedly cites:
+
+\begin{itemize}
+\item \code{docs/TECHNICAL\_REPORT.md} --- the living results ledger:
+  protocol contract, model-zoo scores, ensemble standings, roadmap.
+\item \code{docs/FEATURE\_RESEARCH.md} --- the forensic report:
+  leaderboard recalibration, deconvolution checks, atlas taxonomy and
+  stability numbers, selection-lab results.
+\item \code{docs/WHAT\_DIDNT\_WORK.md} --- the graveyard
+  (Ch.~\ref{ch:negative}): every discarded direction with its evidence.
+\end{itemize}
+
+\section*{Reproduction quickstart}
+
+\begin{lstlisting}
+uv sync                                     # environment
+
+# 1. precompute the pool once (features, frozen stats, memmap)
+uv run python scripts/precompute_dataset.py \
+    --min-date 700 --max-date 1698 --train-until 1598 \
+    --lagged-responders 0,1,2,3,4,5,6,7,8 \
+    --out artifacts/precomputed/pool700_lags
+
+# 2. forensic atlas on two windows (stability gate)
+uv run python scripts/profile_features.py --min-date 1500 \
+    --max-date 1580 --out artifacts/feature_atlas/win1500
+uv run python scripts/profile_features.py --min-date 900 \
+    --max-date 980  --out artifacts/feature_atlas/win900
+
+# 3. one walk-forward run, online refit included
+uv run js cv --model lstm_modelr --min-date 1319 --max-date 1698 \
+    --n-splits 1 --test-size 100
+
+# 4. a bag from one YAML, blended
+uv run python scripts/run_experiment.py \
+    --config experiments/example_bag.yaml
+\end{lstlisting}
+
+Hardware notes for the budget-constrained (all of Part V was first run on
+a 16\,GB laptop): float16 memmaps make the full pool a $\sim$9 GB file;
+single members train inside 9--10 GB; XGBoost runs single-threaded when
+sharing a process with torch on macOS (OpenMP duplication --- see
+Ch.~\ref{ch:treesmlp}); attention-family training wants a GPU, which is
+exactly why the synthetic triage of Ch.~\ref{ch:synthetic} exists.

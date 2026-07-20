@@ -290,7 +290,19 @@ def run_cv(cfg: Cfg, df: pl.DataFrame | None = None) -> list[float]:
         pipe.fit(df_train, df_valid, verbose=cfg.verbose)
 
         # Day-by-day predict + online refit (matches Volkova's loop).
-        pipe_eval = copy.deepcopy(pipe)
+        # ``pipe`` is not reused after this point, so the deepcopy is only
+        # defensive — and XGBPerHorizon cannot survive it: its __getstate__
+        # nulls the booster (deliberately, to dodge the torch+libomp pickle
+        # segfault on macOS), so deepcopy *succeeds* and silently returns a
+        # model that asserts on predict. Detect via the same dump_booster
+        # sentinel FullPipeline.save uses and reuse the pipeline directly.
+        if hasattr(pipe.model, "dump_booster"):
+            pipe_eval = pipe
+        else:
+            try:
+                pipe_eval = copy.deepcopy(pipe)
+            except Exception:
+                pipe_eval = pipe
         preds_list: list[np.ndarray] = []
         for i, dt in enumerate(tqdm(valid_dates, disable=not cfg.verbose, desc=f"fold{fold}-eval")):
             day = df_valid.filter(pl.col(COL_DATE) == dt)

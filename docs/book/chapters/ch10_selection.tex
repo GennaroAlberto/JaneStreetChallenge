@@ -1,0 +1,167 @@
+\chapter{Feature Selection and Discovery}
+\label{ch:selection}
+
+More features are not better. Every column you feed a model is variance you
+must pay for out of a signal budget of one percent; redundant columns
+dilute tree ensembles and slow everything; unstable columns are leakage's
+quieter cousin, borrowing score from relationships that will not survive to
+test time. This chapter presents the selection pipeline that won the DRW
+crypto competition, our port of it, and the places where our forensic
+toolkit had to correct it.
+
+\section{The DRW pipeline, annotated}
+
+The winner faced $\sim$890 anonymous features and distilled them roughly as
+follows --- annotations ours:
+
+\subsection{Step 1: correlation clustering to medoids}
+
+Compute the feature correlation matrix; define distance $1 - |\rho|$;
+cluster (he solved a combinatorial medoid problem; complete-linkage
+hierarchical clustering cut at distance $0.4$, i.e.\ $|\rho| \ge 0.6$, is
+the practical equivalent); keep one representative per cluster --- the
+\textbf{medoid}, the member with the highest total $|\rho|$ to its
+clustermates, ``the most expensive point to replicate.'' 890 features
+$\to$ $\sim$60.
+
+\emph{Annotation:} the right first move on a raw, redundant dump ---
+correlated duplicates split importance in trees, waste attention in
+networks, and multiply the selection search space. But see
+\S\ref{sec:selpitfalls} for what happened when we applied it to an
+already-curated pool.
+
+\subsection{Step 2: near-zero-correlation cut}
+
+Drop features with $|\corr(x, y)| \le 10^{-4}$. $\sim$60 $\to$ $\sim$40.
+\emph{Annotation:} a threshold this tiny only removes the truly inert; it
+is deliberately conservative because univariate correlation is a bad judge
+of value (Chapter~\ref{ch:featforensics}) --- weak-univariate features can
+be strong in combination.
+
+\subsection{Step 3: SHAP-consistency across folds}
+
+Fit a gradient-boosted model per CV fold (his: six purged bimonthly
+groups); compute mean-$|$SHAP$|$ importance per fold; keep features in the
+top-20 of \emph{every} fold; union across model variants. $\sim$40 $\to$
+$\sim$30.
+
+\emph{Annotation:} the load-bearing idea. Importance in \emph{one} fold is
+importance in one regime --- possibly noise, possibly a relationship that
+died in 2024. Consistency across temporally distinct folds is a
+\emph{stability filter}, the same epistemology as our two-window atlas
+gate (\S\ref{sec:atlas}), applied to importance instead of timing. Our
+port keeps features in the top-20 of $\ge 3$ of 4 contiguous folds.
+
+\subsection{Step 4: symbolic recombination}
+
+Generate second- and third-order combinations of the survivors
+($X + Y$, $X - Y$, $XY$, $X/Y$, $\min$, $\max$, $XYZ$, $(X+Y)/Z$, \dots),
+screen by target correlation, re-run step 3 on the enlarged pool.
+
+\subsection{Step 5: recycling}
+
+Re-add previously dropped features \emph{one at a time} and keep any that
+improve validation. \emph{Annotation:} this exists because features
+\textbf{lose predictive power over time} --- the winner observed his older
+feature set degrading on newer data and re-audited every discard.
+Selection is not a one-shot decision; under drift it has a maintenance
+schedule.
+
+\subsection{Step 6: autoencoder features}
+
+Feed the final set through a small autoencoder; append the bottleneck
+activations ($\sim$8 dims) as features. His single biggest reported boost.
+\emph{Annotation:} an AE bottleneck is a learned nonlinear factor model of
+the feature set; its coordinates expose ``common state of the market'' in
+a form trees can split on. It is also a black box inside your pipeline ---
+his own caveat was that pipeline robustness matters most exactly here.
+
+\section{Our port, and the two measured corrections}
+\label{sec:selpitfalls}
+
+Running the pipeline on our engineered pool
+(\code{scripts/drw\_feature\_lab.py}; 134 columns in, same fixed harness as
+Chapter~\ref{ch:featurepatterns}) reproduced the wins and exposed two
+boundary conditions:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+variant & features & $\Rw$ \\
+\midrule
+all 134 columns (baseline) & 134 & $+0.00591$ \\
+medoids only & 87 & $+0.00576$ \\
+medoids + combos & 127 & $+0.00586$ \\
+all + combos (importance-seeded) & 174 & $+0.00630$ \\
+\textbf{all + combos (atlas-seeded)} & 184 & $\bm{+0.00643}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Correction 1: pruning a curated pool costs signal.} Medoid
+reduction, the step that made the DRW winner's raw dump tractable,
+\emph{lost} $0.00015$ here: our 134 columns were already engineered with
+intent, and their redundancy was partly informative (a feature and its
+market average are correlated \emph{and} both useful). Diagnosis: cluster
+pruning is for raw dumps; for curated pools, keep everything and let the
+search \emph{add}.
+
+\textbf{Correction 2: importance-based seeding misses interaction-only
+value.} The lag-responder columns never survive SHAP-consistency (as
+levels they are worthless --- Chapter~\ref{ch:featurepatterns}), so the
+symbolic stage never got the chance to difference them into the rsig
+momentum block we know is worth $+0.0003$. And the correlation screen
+inside step 4 has the same blind spot: a combination whose parents have
+zero univariate correlation cannot beat its parents by a metric on which
+both score zero-ish in a way that surfaces reliably. The fix that
+measured: \textbf{seed the candidate pool from forensics} --- atlas lead
+features, reversal block, lag columns --- alongside the importance
+survivors ($+0.00039 \to +0.00052$). The general form: importance tells
+you what the model already uses; \emph{forensics tells you what it
+should}.
+
+\begin{warnbox}[: selection is model selection, done many times]
+Every screening decision is a model comparison on finite data, and a
+pipeline that makes hundreds of such comparisons on one validation signal
+is a machine for manufacturing selection bias
+(Chapter~\ref{ch:leakage}, experiment hygiene). The DRW pipeline's
+defenses --- fold-consistency, train-side screening with tail-side
+validation touched once per stage, parent-beating requirements,
+redundancy caps --- are not decoration; they are what keeps a
+feature-generation loop from becoming an overfitting loop. Port the
+defenses, not just the search.
+\end{warnbox}
+
+\section{A synthesis: the selection stack we recommend}
+
+For a fresh competition, in order:
+
+\begin{enumerate}
+\item \textbf{Forensic atlas first} (Chapter~\ref{ch:featforensics}):
+  timing taxonomy, stability gate. Cost: an afternoon. This is your prior.
+\item \textbf{Raw dump?} Medoid-prune at $|\rho| \ge 0.6$.
+  \textbf{Curated pool?} Skip pruning.
+\item \textbf{Fold-consistent importance} (4--6 contiguous folds, top-$K$
+  intersection-ish) to find the model-visible core.
+\item \textbf{Symbolic search} over core $\cup$ forensic seeds; screen on
+  train, redundancy-cap, validate each stage once on the tail.
+\item \textbf{Ablate per model family} --- feature value is a
+  (feature, model) property.
+\item \textbf{Schedule recycling}: re-audit discards when the validation
+  window rolls forward. Under drift, selection decays like everything
+  else.
+\item Optional: \textbf{AE bottleneck} over the final set --- high
+  expected value by DRW's evidence, black-box risk priced in.
+\end{enumerate}
+
+\begin{jsbox}[: what the discovered combos looked like]
+The atlas-seeded search's accepted list is itself a forensic document.
+Fifteen of fifty combos paired a \emph{reversal} feature with a
+\emph{market-wide} factor --- e.g.\
+$\min(\feat{07}_{\text{mkt avg}},\ \feat{45})$ --- that is, ``reversal
+signal, gated by market state.'' Nobody hypothesized that structure; the
+search found it, the tail validated it, and it immediately suggests the
+next experiments (conditional reversal models; market-state interaction
+terms in the nets). A good selection pipeline is also a discovery
+instrument.
+\end{jsbox}

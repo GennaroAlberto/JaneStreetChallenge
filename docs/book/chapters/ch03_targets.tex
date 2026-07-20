@@ -1,0 +1,297 @@
+\chapter{Reverse-Engineering the Targets}
+\label{ch:targets}
+
+The highest-leverage work in our entire campaign was done without fitting a
+single model. It was \emph{forensic}: determining what the anonymized target
+actually \emph{is}. This chapter teaches the toolkit through the definitive
+worked example --- the community reverse-engineering of the Jane Street
+responders (Kaggle discussion \#555562, John Payne, reproduced, verified, and
+extended in our repository) --- and develops each tool with enough
+mathematics that you can wield it on the next anonymized dataset you meet.
+
+\section{Why forensics first}
+
+An anonymized target is not an arbitrary label. Somebody \emph{computed} it
+from real quantities, with real code, and then hid the code. Computation
+leaves invariants: moving averages leave autocorrelation ramps; time shifts
+leave lead--lag asymmetries; additive noise leaves spectral floors;
+differences of related series leave cross-correlation fingerprints. Recovering
+the construction tells you:
+
+\begin{itemize}
+\item \textbf{the ceiling} --- if the target is a forward-looking average of
+  innovations, the innovations' unpredictability bounds every model
+  (\S\ref{sec:ceilingderiv});
+\item \textbf{the feature semantics} --- once you know the target is
+  ``next-20-step average return,'' features cluster into interpretable roles
+  (Chapter~\ref{ch:featforensics});
+\item \textbf{legal transformations} --- deconvolution, timing alignment,
+  and auxiliary-target construction (Chapter~\ref{ch:featurepatterns}) all
+  require knowing the construction;
+\item \textbf{what not to attempt} --- entire research programs (within-day
+  target autoregression, for instance) are provably dead ends under the
+  recovered structure.
+\end{itemize}
+
+\section{Tool 1: the autocorrelation function as a fingerprint reader}
+\label{sec:acf}
+
+\subsection{The mathematics of the fingerprint}
+
+Let $s_t$ be a zero-mean white-noise sequence, $\Var(s_t)=\sigma^2$, and
+define the $w$-step simple moving average
+\[
+r_t \;=\; \frac{1}{w}\sum_{j=0}^{w-1} s_{t+j}.
+\]
+The autocovariance of $r$ at lag $k \ge 0$ counts overlapping terms:
+\begin{equation}
+\Cov(r_t, r_{t+k})
+= \frac{\sigma^2}{w^2}\,\max(0,\, w-k)
+\qquad\Longrightarrow\qquad
+\corr(r_t, r_{t+k}) = \max\!\Big(0,\ 1-\frac{k}{w}\Big).
+\label{eq:smaacf}
+\end{equation}
+The autocorrelation of an SMA-of-white-noise is a \textbf{perfect triangular
+ramp}: it decays \emph{linearly} and hits exactly zero at lag $w$. No AR
+process, no trend, no seasonal pattern produces this shape. A linear ramp
+with a sharp cutoff is as close to a smoking gun as time-series forensics
+offers: \emph{this series is a moving average, and the cutoff lag is the
+window length}.
+
+Contrast the other canonical fingerprints you should have on file:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+ACF shape & generating process \\
+\midrule
+triangular ramp, hard zero at lag $w$ & SMA($w$) of white noise \\
+geometric decay $\rho^k$ & AR(1) with coefficient $\rho$; ``level'' series \\
+single spike at lag 0 & white noise (returns, innovations) \\
+ramp that decays to a plateau $>0$ & SMA of noise \emph{plus} a persistent
+level component \\
+spikes at $k = P, 2P, \dots$ & seasonality with period $P$ \\
+ramp with rounded (not sharp) corner & SMA plus additive observation noise
+(the noise dilutes but does not move the corner) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{The worked example: three windows, three ramps}
+
+Applied to the Jane Street responders (computed per symbol, within days,
+averaged over thousands of symbol-days --- the averaging matters, single
+series are too noisy):
+
+\begin{itemize}
+\item \resp{6}: linear decay, sharp cutoff at lag \textbf{20};
+\item \resp{7}: same shape, cutoff at lag \textbf{120};
+\item \resp{8}: same shape, cutoff at lag \textbf{4}.
+\end{itemize}
+
+By \eqref{eq:smaacf}: the three responders are moving averages of windows
+20, 120, and 4. Moreover \resp{0}/\resp{3} share the lag-20 fingerprint,
+\resp{1}/\resp{4} the lag-120 one, \resp{2}/\resp{5} the lag-4 one --- three
+window lengths, three groups. Our own reproduction
+(\code{scripts/profile\_features.py}, run over two 80-day windows) measures
+ramp linearity as the $R^2$ of a straight-line fit to the pre-cutoff ACF:
+\textbf{0.996} for \resp{6}, \textbf{0.99} for \resp{8}, with cutoffs at
+19--20 and 4 respectively. The fingerprint is essentially perfect.
+
+The host's own metadata corroborates: \code{responders.csv} tags
+\{2,5,8\} with \code{tag\_1} (the SMA-4 group), \{0,3,6\} with \code{tag\_2}
+(SMA-20), \{1,4,7\} with \code{tag\_3} (SMA-120), \{0,1,2\} with
+\code{tag\_0} and \{3,4,5\} with \code{tag\_4}. Anonymized metadata often
+confirms structure discovered numerically; read it \emph{after} forming
+hypotheses, as a check against confirmation bias.
+
+\subsection{Implementation: always via FFT}
+
+Computing ACFs by looping over lags is $O(TK)$ per series and, worse,
+invites off-by-one errors. Use the Wiener--Khinchin route: the
+autocorrelation is the inverse FFT of the power spectrum.
+
+\begin{lstlisting}
+def mean_acf(X, max_lag):            # X: (n_series, T), rows demeaned/unit-std
+    L  = 1 << int(np.ceil(np.log2(2 * X.shape[1])))   # zero-pad: no wraparound
+    F  = np.fft.rfft(X, n=L, axis=1)
+    ac = np.fft.irfft(np.abs(F)**2, n=L, axis=1)[:, :max_lag+1]
+    ac /= ac[:, :1]                  # normalize by lag-0
+    return ac.mean(axis=0)           # average the fingerprint across series
+\end{lstlisting}
+
+Zero-padding to at least $2T$ prevents circular wraparound; averaging across
+(symbol, day) series turns a noisy per-series estimate into a clean
+fingerprint. This exact function, applied to \emph{features} instead of
+responders, produced one of our campaign's original discoveries
+(Chapter~\ref{ch:featforensics}): three features carry the SMA fingerprint
+with cutoff $\approx 160$.
+
+\section{Tool 2: lead--lag regression --- discovering the time shift}
+\label{sec:shift}
+
+The second discovery in \#555562 is subtler and worth more. Payne regressed
+the responders on the features at various relative shifts and found:
+\textbf{features at time $t$ predict \resp{6} at time $t-20$ with linear
+$R^2 \approx 0.5$} --- five hundred times better than they predict it at
+$t+0$ (about $0.001$).
+
+Think about what that asymmetry means. If the stored value at row $t$ were
+the average of the \emph{past} 20 steps, contemporaneous features (which
+describe the present and recent past) would correlate with it strongly at
+lag 0. Instead the correlation peaks when the responder is taken from 20
+rows \emph{earlier} --- that is, the value stored at row $t$ aligns with
+information from rows $t$ through $t+20$. Conclusion: \textbf{the stored
+responder is forward-shifted}. The value in column \resp{6}, row $t$, is
+(approximately) the average of the underlying signal over $(t,\, t+20]$.
+The competition's task, decoded: \emph{given features now, predict the
+average of the signal over the next 20 steps.}
+
+\begin{keybox}[: run the shift scan on every anonymized target]
+For shifts $k \in \{-2w, \dots, +2w\}$, fit a fast linear model (ridge on a
+feature subsample suffices) of $y_{t+k}$ on features$_t$ and plot $R^2(k)$.
+A peak at $k=0$ means a nowcasting target; a peak at $k<0$ means the stored
+target is forward-shifted (you are forecasting); the peak's offset measures
+the shift. Ten minutes of compute; changes your entire mental model of the
+problem.
+\end{keybox}
+
+Two corollaries of the discovered shift, both of which shaped our campaign:
+
+\begin{enumerate}
+\item \textbf{The features are mostly descriptions of the realized past.}
+  If features explain the just-\emph{completed} window at $R^2=0.5$ but the
+  upcoming window at $0.01$, then features are overwhelmingly
+  backward-looking summaries --- ``nowcast'' information --- with only a
+  sliver of genuine foresight. Feature forensics (Chapter
+  \ref{ch:featforensics}) quantifies exactly which features carry the
+  sliver.
+\item \textbf{A high-SNR auxiliary task exists.} Predicting the realized
+  window (the $R^2=0.5$ task) is legal as a \emph{training} objective ---
+  it needs no future information at training time --- and provides
+  gradient signal two orders of magnitude stronger than the real target.
+  We wired this into our recurrent models as ``nowcast auxiliary heads''
+  (Chapter~\ref{ch:featurepatterns}).
+\end{enumerate}
+
+\section{Tool 3: Fourier analysis --- confirming the construction}
+\label{sec:fourier}
+
+The spectral density of an SMA($w$) of white noise is
+\[
+S_r(f) \;\propto\; \left|\frac{\sin(\pi w f)}{w\,\sin(\pi f)}\right|^2,
+\]
+the squared Dirichlet kernel --- a $\mathrm{sinc}$-like envelope with nulls
+at multiples of $1/w$. Payne fit exactly this envelope, nulls spaced $1/20$
+apart, to \resp{6}'s spectrum. One mismatch: the observed troughs do not
+reach zero. A pure SMA has \emph{exact} spectral nulls; a floor under the
+nulls means \textbf{something broadband was added after the averaging} ---
+observation noise. Simulating SMA-20 of Gaussian noise \emph{plus} a small
+independent Gaussian term reproduced the observed spectrum almost perfectly.
+
+So the full recovered construction is:
+\begin{equation}
+r^{(w)}_t \;=\; \frac{1}{w}\sum_{j=1}^{w} s_{t+j} \;+\; \eta_t,
+\qquad w \in \{4, 20, 120\},
+\label{eq:construction}
+\end{equation}
+with $s_t$ the underlying per-step signal (near-white, heavy-tailed ---
+plausibly one-minute returns) and $\eta_t$ small additive noise (deliberate
+obfuscation or measurement error). Two exchange variants exist ($A$: responders
+6/7/8; $B$: responders 3/4/5, the same $s$ observed with independent venue
+noise), and responders 0/1/2 are the $B{-}A$ differences at matching windows.
+
+The additive noise term is not a footnote. It means: (i) even perfect
+knowledge of $s$ cannot reach $\Rw = 1$ on $r$; (ii) any deconvolution of
+$r$ back to $s$ (Chapter~\ref{ch:featforensics}) must be regularized, since
+pure inversion amplifies $\eta$ at the spectral nulls; (iii) simulated
+replicas of the data (Chapter~\ref{ch:synthetic}) must include it to be
+faithful.
+
+\section{The ceiling, derived}
+\label{sec:ceilingderiv}
+
+Now we can compute what Chapter~\ref{ch:problem} asserted. Under
+\eqref{eq:construction}, the target at row $t$ averages \emph{future}
+innovations $s_{t+1},\dots,s_{t+20}$. Condition on everything observable at
+time $t$ (call it $\mathcal F_t$). Then
+\[
+\E\big[r^{(20)}_t \,\big|\, \mathcal F_t\big]
+= \frac{1}{20}\sum_{j=1}^{20} \E\big[s_{t+j} \mid \mathcal F_t\big],
+\]
+and the achievable $R^2$ is
+\[
+R^2_{\max}
+= \frac{\Var\!\big(\E[r_t \mid \mathcal F_t]\big)}{\Var(r_t)}
+= \frac{\frac{1}{400}\Var\!\Big(\sum_j \E[s_{t+j}\mid\mathcal F_t]\Big)}
+       {\frac{20\,\sigma_s^2}{400} + \sigma_\eta^2}.
+\]
+If innovations were exactly white ($\E[s_{t+j}\mid\mathcal F_t]=0$), the
+ceiling is \emph{zero}. The observed leaderboard ceiling of $\approx 0.014$
+measures precisely how non-white the innovations are: the market's per-step
+returns have a faint predictable component --- from momentum/reversal
+structure, cross-sectional spillovers, and features that genuinely lead ---
+and \emph{that faint component, averaged over a 20-step window, is the
+entire game}. Every point of leaderboard score is a statement about market
+microstructure.
+
+This derivation also kills a tempting research direction cleanly. Within a
+day you never observe past values of $r$; but even if you did, under
+\eqref{eq:construction} the target's own history is nearly useless:
+$\Cov(r_t, r_{t+k}) = 0$ for $k \geq w$ by whiteness, so
+$r_{t-20}$ tells you (almost) nothing about $r_t$. Payne said it directly
+in the thread: even a perfect estimate of the responder twenty steps ago
+has expectation zero for the current value. \emph{Do not build within-day
+autoregressive models of this target.} We logged this as a
+theorem-level negative result before spending any compute on it --- the
+cheapest kind.
+
+\section{Tool 4: cross-series relationships}
+
+With per-series structure identified, examine relationships \emph{between}
+series. The \#555562 analysis noticed, by overlaying lag-aligned plots, that
+\resp{6} behaves like a ``derivative'' of \resp{7} (when the 20-average is
+positive, the 120-average rises) and \resp{8} like a derivative of \resp{6}.
+That is exactly what SMAs of one signal at nested windows do --- the shorter
+average leads the longer one --- and it suggests immediately that
+\textbf{differences of same-signal-different-window series are trend
+signals}. Lagged by one day (the only legal access at inference), these
+became our ``rsig'' feature block: $\text{SMA4}-\text{SMA20}$ (short
+momentum), $\text{SMA20}-\text{SMA120}$ (medium momentum), $A{-}B$ at
+matching window (venue spread). Measured value: $+0.0003$ on an XGBoost
+harness where the nine raw lagged responders in un-differenced form
+contributed \emph{nothing} ($-0.00003$). Construction knowledge converts
+dead columns into live ones (Chapter~\ref{ch:featurepatterns} for the full
+accounting).
+
+\section{The forensic report template}
+
+Every anonymized dataset deserves a written forensic report before modeling
+begins. Ours (\code{docs/FEATURE\_RESEARCH.md} in the repository) follows a
+template you can copy:
+
+\begin{enumerate}
+\item \textbf{Construction hypothesis} for each target: formula, window,
+  shift, noise (equation \eqref{eq:construction} form), with the evidence
+  (ACF cutoff, ramp linearity, spectral floor, shift-scan peak).
+\item \textbf{Ceiling estimate} and its derivation.
+\item \textbf{Consequences}: dead research directions (with proofs);
+  legalized transformations (deconvolution, aux targets); alignment
+  conventions every pipeline must respect.
+\item \textbf{Stability checks}: every finding recomputed on a second,
+  distant time window. (Our standard: two 80-day windows, 600 days
+  apart. Structural facts --- windows, shifts --- reproduced exactly;
+  that is what earns them load-bearing status.)
+\item \textbf{Open questions}, ranked by expected value.
+\end{enumerate}
+
+\begin{drillbox}
+The repository's \code{scripts/profile\_features.py} computes ACF ramps,
+cutoffs, and linearity scores for all 88 columns in one run. Reproduce the
+responder fingerprint table, then re-run on the first differences of the
+responders. Predict what the ACF of a \emph{differenced} SMA-of-noise looks
+like before you look --- deriving it from \eqref{eq:smaacf} is a five-line
+exercise --- and check yourself. (You will meet the answer again in
+Chapter~\ref{ch:smoothing}, where it explains why differencing pre-smoothed
+features is the right anti-smoothing move.)
+\end{drillbox}

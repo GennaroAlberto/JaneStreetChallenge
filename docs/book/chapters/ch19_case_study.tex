@@ -1,0 +1,177 @@
+\chapter{The Campaign: A Worked End-to-End Case Study}
+\label{ch:casestudy}
+
+Methodology chapters present knowledge in its cleaned-up, logical order.
+Real campaigns happen in a different order --- with dead ends, revisions,
+and decisions made under uncertainty. This chapter replays ours
+chronologically, because the \emph{sequencing} of effort is itself a
+transferable skill, and because seeing where the score actually came from
+is the best antidote to architecture romanticism.
+
+\section{Phase 0: replicate a known-good solution}
+
+We began not with our own ideas but by \textbf{faithfully replicating the
+8th-place solution} (whose author published code and a write-up):
+her feature engineering (Chapter~\ref{ch:featurepatterns}), her
+multi-branch GRU (Chapter~\ref{ch:rnn}), her walk-forward protocol with
+online refit (Chapter~\ref{ch:validation}), down to hyperparameters.
+
+Why replication first is the right opening move:
+
+\begin{itemize}
+\item It \textbf{calibrates the harness}: until your pipeline reproduces a
+  published number, every measurement it emits is suspect. Ours
+  reproduced her tier of performance, which certified the metric
+  implementation, the leakage boundaries, and the evaluation loop in one
+  stroke.
+\item It \textbf{front-loads infrastructure}: the replica forced the
+  memmap precompute, the day-batch layout, the online-refit loop --- all
+  of which every later experiment reused.
+\item It \textbf{establishes the real baseline}: not ``zero'' but ``what
+  a gold-tier competitor achieves,'' making every subsequent delta
+  meaningful.
+\end{itemize}
+
+\section{Phase 1: benchmarks and the first surprises}
+
+A structured benchmark over the model zoo on shared slices produced the
+ladder of Chapter~\ref{ch:metric} and three early findings that set
+strategy:
+
+\begin{itemize}
+\item \textbf{Data beats capacity}: 200 $\to$ 280 training days lifted
+  every model; doubling width lifted nothing. Effort re-routed from
+  architecture tuning to data logistics.
+\item \textbf{Online refit is the lever} ($+0.003$--$0.005$ on RNNs) ---
+  and the refit-lr sweep found the plateau-and-cliffs law
+  (Chapter~\ref{ch:online}).
+\item \textbf{The ensemble wall}: signature and transformer streams,
+  despite respectable solo scores, took zero weight in blends. Diversity,
+  not solo score, became the admission criterion
+  (Chapter~\ref{ch:ensembling}).
+\end{itemize}
+
+Standing at $+0.0104$ with a three-stream blend --- roughly 8th-place
+tier on our local protocol.
+
+\section{Phase 2: the recalibration}
+
+A check of the actual private leaderboard rewrote the strategy document.
+We had been benchmarking against $+0.0112$ --- the 8th place's
+\emph{public} score; the private reality: 8th $= 0.0104$, 1st
+$= \bm{0.0139}$, with a conspicuous gap between the top three
+(0.0132--0.0139) and the pack (4th at 0.0117). Two conclusions:
+
+\begin{itemize}
+\item Our local $+0.0104$ was already 8th-tier --- the replication had
+  succeeded more fully than assumed.
+\item The top three, none of whom published, were separated from the pack
+  by a margin ($\sim +0.002$) too large for ensemble polish. They likely
+  had \emph{structural} insight the pack lacked. Chasing them with more
+  bagging was arithmetic denial; the campaign pivoted to forensics.
+\end{itemize}
+
+\begin{keybox}[: read the leaderboard as evidence]
+The \emph{shape} of a final leaderboard is data about the problem.
+A smooth continuum says grind and variance reduction; a step
+discontinuity, like this one's after 3rd place, says a discrete idea
+exists that the pack missed. Aim accordingly.
+\end{keybox}
+
+\section{Phase 3: the forensic pivot}
+
+In one stretch, the campaign built and ran the instruments of Part~II:
+the deconvolution of \resp{8} into the underlying signal
+(\S\ref{sec:deconv}, validated by its three sanity checks), the lead--lag
+atlas over all 79 features (\S\ref{sec:atlas}), and the two-window
+stability gate. Yield, within days:
+
+\begin{itemize}
+\item the feature taxonomy (lead / reversal / slow-SMA / market-wide),
+  stable at Spearman $+0.97$ across 600 days;
+\item the discovery that three features arrive pre-smoothed (SMA-160
+  fingerprints) --- an un-smoothing opportunity
+  (Chapter~\ref{ch:smoothing});
+\item nowcast auxiliary heads (\S\ref{sec:auxtargets}), implemented and
+  queued for GPU A/B;
+\item and the seeds that upgraded the DRW-style symbolic search from
+  $+0.00039$ to $+0.00052$ (Chapter~\ref{ch:selection}).
+\end{itemize}
+
+The contrast with Phase 1 is the book's thesis in miniature: a month of
+architecture benchmarking moved the blend by $\sim +0.001$; days of
+forensics generated the entire remaining research agenda.
+
+\section{Phase 4: importing another competition's playbook}
+
+The DRW crypto winner's write-up was ported wholesale
+(Chapter~\ref{ch:selection}): correlation-medoid pruning,
+SHAP-consistency, symbolic recombination, with our forensic corrections
+(skip pruning on curated pools; seed the search from the atlas). Measured
+value on the fixed harness: $+0.0005$ --- and, as a byproduct, the
+discovery that the strongest combinations were market-gated reversal
+terms, itself a new forensic fact.
+
+The meta-lesson: \textbf{solution write-ups from adjacent competitions
+are importable technology}. Reading them is cheap; porting them onto your
+own harness --- with your own ablation discipline, because boundary
+conditions differ --- is a reliably positive-expected-value activity.
+
+\section{Phase 5: disciplined architecture bets}
+
+Only in the final phase, with forensics in hand, did the campaign return
+to architectures --- now as \emph{targeted} bets rather than a zoo tour.
+The causal iTransformer and inverted-bridge TimeXer
+(Chapter~\ref{ch:attention}) were built because the atlas and the
+symbolic search had produced specific evidence for cross-variate gates
+and a natural endo/exo split. And rather than buying GPU-weeks on faith,
+the synthetic triage world (Chapter~\ref{ch:synthetic}) was built to
+decide, at laptop cost, whether either bias is realizable at this SNR
+--- with the decision rule fixed in advance.
+
+\section{Where the score actually came from}
+
+The campaign ledger, consolidated. Approximate contributions to the final
+local blend of $+0.0104$ (and the queued upside beyond it):
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xr@{}}
+\toprule
+source & contribution \\
+\midrule
+replicated baseline (features + ModelR + protocol) & $+0.0076$ \\
+online refit, tuned per family & $+0.0016$ \\
+recency window (280--400 days vs.\ naive full history) & $+0.0012$ \\
+three-stream ensemble over best-per-family & $+0.0012$ \\
+engineered blocks (rsig, clusters, symbolic combos)$^{\ast}$ &
+$+0.0005$--$0.0009$ \\
+architecture changes beyond the replica & $\approx 0$ \\
+\midrule
+queued: nowcast heads, atlas-seeded features at scale, AE factors,
+triaged attention & unknown \\
+\bottomrule
+\end{tabularx}
+\end{center}
+{\footnotesize $^{\ast}$measured on the XGB stream; blend-level
+contribution partially overlapping with ensemble line.}
+
+Read the zero in that table again: \emph{every} architecture beyond the
+replicated one --- transformers, signatures, width doublings ---
+contributed nothing to the blend that mattered. The score came from
+process (adaptation, recency, averaging), features, and calibration.
+That is not an argument against architecture research; it is an argument
+for sequencing it \textbf{last}, behind forensics, on specific evidence,
+through cheap triage.
+
+\begin{drillbox}
+Write the phase plan for your next competition before touching data, with
+exit criteria per phase: (0) replicate something published --- exit when
+your harness reproduces its number; (1) benchmark families on a fixed
+harness --- exit at the ensemble wall; (2) recalibrate against the true
+target --- exit with a gap analysis; (3) forensics --- exit with a
+stability-gated taxonomy; (4) import adjacent playbooks; (5) targeted
+architecture bets through synthetic triage. Then notice how much of the
+usual first month --- architecture shopping --- this plan defers, and
+where it spends the time instead.
+\end{drillbox}
